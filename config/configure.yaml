@@ -1,0 +1,61 @@
+MES_Data:
+  BSFA11:
+    Token: "ad194675-cc7f-4582-b296-c395f49c0b97"
+    results_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl52/results"
+    components_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl52/components"
+    uniqueparts_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl52/uniqueparts"
+    location_results_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl52/location_results"
+  BSFA12:
+    Token: "ce2a632c-0463-49c7-b40e-e2b0f93e750c"
+    results_url:  "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/results"
+    components_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/components"
+    uniqueparts_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/uniqueparts"
+    location_results_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/location_results"
+  BSFA13:
+    Token: "ce2a632c-0463-49c7-b40e-e2b0f93e750c"
+    results_url:  "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/results"
+    components_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/components"
+    uniqueparts_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/uniqueparts"
+    location_results_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/location_results"
+  BSFA14:
+    Token: "ce2a632c-0463-49c7-b40e-e2b0f93e750c"
+    results_url:  "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/results"
+    components_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/components"
+    uniqueparts_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/uniqueparts"
+    location_results_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/location_results"
+  BSFA15:
+    Token: "ce2a632c-0463-49c7-b40e-e2b0f93e750c"
+    results_url:  "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/results"
+    components_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/components"
+    uniqueparts_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/uniqueparts"
+    location_results_url: "https://szhlinvma41.apac.bosch.com:8092/nexeed/sudbl70/location_results"
+
+Core_Data:
+  Token: "fb5eea49-b5c4-489a-ae59-1ad5b612ba83"
+  v_line_station: "https://szhlinvma41.apac.bosch.com:8092/master_data/v_line_station"
+  location_station: "https://szhlinvma41.apac.bosch.com:8092/master_data/location_station"
+
+PMS_Data:
+  Token: "b8e18a2b-be1e-43a1-bfca-5db3e5605d85"
+  v_pms_releaseinfo_moe6: "https://szhlinvma41.apac.bosch.com:8092/pms/v_pms_releaseinfo_moe6"
+
+Document_Library:
+  Token: "94444a95-9011-4341-9843-98d73246300a"
+  document_info: "https://szhlinvma41.apac.bosch.com:8092/document_library/o_d_doc_lib_documentinfo"
+  file_path: '''\\szhaeapp111\content\'''
+  example: '''\\szhaeapp111\content\File\Work Instruction\CE\W ME MFG CE - 11.29 S.S Tooling Replacement Management.docx'''
+
+Clickhouse:
+  host: "10.8.214.68"
+  port: 8123
+  user: "TEC_KAFKA_READ"
+  password: "Password@123456"
+  key: "ZR9xEsCv46lSaC910OjGaw=="
+  iv: "R4Y0QzToHRTNqYQPU8C8Xg=="
+  ciphertext: "skxa0ADxwQUbTU2eQ3S04BOUkTWeAJhjKdAo+7uzo5Q="
+  database: "KAFKA"
+  servo_and_cylinder: "KAFKA.MECN_MOE6_RUNTIMEPARAMMONITOR_WEBSCADA_JSON_PROCESSED_V02"
+  robot: "KAFKA.MECN_MOE6_ROBOT_WEBSCADA_JSON_PROCESSED"
+  max_rows: 100000
+  connect_timeout_seconds: 15 # 数据库连接的超时时间，最多等待连接建立 15 秒
+  send_receive_timeout_seconds: 600 # HTTP 响应读取等待超时

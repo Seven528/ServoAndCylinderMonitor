@@ -1,0 +1,60 @@
+# Auto-generated from configure.yaml.
+# Placeholder values only. Do not put credentials here.
+
+MES_Data:
+  BSFA11:
+    Token: CHANGE_ME
+    results_url: CHANGE_ME
+    components_url: CHANGE_ME
+    uniqueparts_url: CHANGE_ME
+    location_results_url: CHANGE_ME
+  BSFA12:
+    Token: CHANGE_ME
+    results_url: CHANGE_ME
+    components_url: CHANGE_ME
+    uniqueparts_url: CHANGE_ME
+    location_results_url: CHANGE_ME
+  BSFA13:
+    Token: CHANGE_ME
+    results_url: CHANGE_ME
+    components_url: CHANGE_ME
+    uniqueparts_url: CHANGE_ME
+    location_results_url: CHANGE_ME
+  BSFA14:
+    Token: CHANGE_ME
+    results_url: CHANGE_ME
+    components_url: CHANGE_ME
+    uniqueparts_url: CHANGE_ME
+    location_results_url: CHANGE_ME
+  BSFA15:
+    Token: CHANGE_ME
+    results_url: CHANGE_ME
+    components_url: CHANGE_ME
+    uniqueparts_url: CHANGE_ME
+    location_results_url: CHANGE_ME
+Core_Data:
+  Token: CHANGE_ME
+  v_line_station: CHANGE_ME
+  location_station: CHANGE_ME
+PMS_Data:
+  Token: CHANGE_ME
+  v_pms_releaseinfo_moe6: CHANGE_ME
+Document_Library:
+  Token: CHANGE_ME
+  document_info: CHANGE_ME
+  file_path: CHANGE_ME
+  example: CHANGE_ME
+Clickhouse:
+  host: CHANGE_ME
+  port: 0
+  user: CHANGE_ME
+  password: CHANGE_ME
+  key: CHANGE_ME
+  iv: CHANGE_ME
+  ciphertext: CHANGE_ME
+  database: CHANGE_ME
+  servo_and_cylinder: CHANGE_ME
+  robot: CHANGE_ME
+  max_rows: 0
+  connect_timeout_seconds: 0
+  send_receive_timeout_seconds: 0

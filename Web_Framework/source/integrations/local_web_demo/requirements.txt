@@ -1,0 +1,4 @@
+# Reuse the same SDK version as the existing platform adapter; no LangChain needed here.
+mcp==2.2.0
+# Already required by MCP; used directly for native-schema argument preflight.
+jsonschema>=4.20.0,<5

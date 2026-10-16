@@ -1,0 +1,21 @@
+# 本机私有配置；任意目录下同名文件均忽略。
+configure.yaml
+!configure.example.yaml
+
+# 本机凭据与虚拟环境
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Python / 系统生成文件
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+*.log
+.vscode/
+
+# 本机下载的文档和结果清单
+/downloads/

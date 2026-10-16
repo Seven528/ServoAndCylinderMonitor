@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>PCB 分析工作台</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <svg class="icon-defs" aria-hidden="true">
+      <defs>
+        <symbol id="i-folder" viewBox="0 0 24 24">
+          <path d="M3 7V5h7l2 2h9v13H3Z" />
+        </symbol>
+        <symbol id="i-ai" viewBox="0 0 24 24">
+          <path
+            d="m10 3 2.3 6.7L19 12l-6.7 2.3L10 21l-2.3-6.7L1 12l6.7-2.3ZM19 2l.9 2.1L22 5l-2.1.9L19 8l-.9-2.1L16 5l2.1-.9Z"
+          />
+        </symbol>
+        <symbol id="i-close" viewBox="0 0 24 24">
+          <path d="m6 6 12 12M6 18 18 6" />
+        </symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24">
+          <path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7" />
+        </symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24">
+          <path d="M5 12h14M12 5v14" />
+        </symbol>
+        <symbol id="i-board" viewBox="0 0 24 24">
+          <rect x="4" y="4" width="16" height="16" rx="2" />
+          <path d="M8 8h8v8H8Z" />
+        </symbol>
+        <symbol id="i-send" viewBox="0 0 24 24">
+          <path d="M20 5v7a3 3 0 0 1-3 3H4m5-5-5 5 5 5" />
+        </symbol>
+        <symbol id="i-download" viewBox="0 0 24 24">
+          <path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5" />
+        </symbol>
+        <symbol id="i-focus" viewBox="0 0 24 24">
+          <path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5" />
+        </symbol>
+        <symbol id="i-history" viewBox="0 0 24 24">
+          <path d="M3 10a9 9 0 1 1 2 8M3 4v6h6M12 7v5l3 2" />
+        </symbol>
+      </defs>
+    </svg>
+    <header id="app-header" class="topbar">
+      <div class="bosch-supergraphic" aria-hidden="true"></div>
+      <div class="brand">
+        <img
+          class="bosch-logo"
+          src="assets/bosch-logo.svg"
+          alt="Bosch"
+          width="108"
+          height="24"
+        />
+        <h1>PCB 分析工作台</h1>
+      </div>
+
+      <button
+        id="focus-view"
+        class="header-action"
+        aria-pressed="false"
+        title="隐藏辅助区域，再次点击恢复布局（Esc 退出）"
+      >
+        <svg><use href="#i-focus" /></svg><span id="focus-label">专注看图</span>
+      </button>
+      <button
+        id="open-chat"
+        aria-label="打开 MOE6 CD Auto Analysis Agent"
+        class="header-action"
+        aria-controls="chat-panel"
+        aria-expanded="false"
+      >
+        <svg><use href="#i-ai" /></svg><span>Agent</span>
+      </button>
+    </header>
+    <div id="drawer-backdrop" class="backdrop" hidden></div>
+    <div class="workspace">
+      <nav id="navigation-rail" class="navigation-rail" aria-label="工作区导航">
+        <button
+          id="open-files"
+          aria-label="打开文件"
+          aria-controls="files-panel"
+          aria-expanded="false"
+          title="文件与上传"
+        >
+          <svg><use href="#i-folder" /></svg><span>文件</span>
+        </button>
+        <button
+          id="open-history"
+          aria-label="打开分析记录"
+          aria-controls="files-panel"
+          aria-expanded="false"
+          title="分析记录"
+        >
+          <svg><use href="#i-history" /></svg><span>记录</span>
+        </button>
+      </nav>
+      <aside
+        id="files-panel"
+        class="files-panel"
+        aria-labelledby="file-heading"
+      >
+        <header class="pane-heading">
+          <h2 id="file-heading">
+            <span id="file-panel-title">工作文件</span>
+            <span id="file-count">0</span>
+          </h2>
+          <button
+            class="icon-button"
+            data-close-panel="files"
+            aria-label="关闭文件栏"
+          >
+            <svg><use href="#i-close" /></svg>
+          </button>
+        </header>
+        <div class="files-scroll">
+          <div id="file-browser">
+            <div id="dropzone" class="dropzone">
+              <svg class="upload-mark"><use href="#i-plus" /></svg
+              ><strong class="upload-hint">添加 UNI 文件</strong>
+              <p class="upload-hint">拖入文件，或选择类型上传</p>
+              <div class="upload-actions">
+                <button id="upload-pcb">
+                  <svg><use href="#i-plus" /></svg>PCB</button
+                ><button id="upload-holder">
+                  <svg><use href="#i-plus" /></svg>Holder
+                </button>
+              </div>
+              <small class="upload-hint">单文件不超过 64 MiB</small>
+            </div>
+            <input id="file-input" type="file" accept=".uni" multiple hidden />
+            <div class="file-section">
+              <h3>PCB <small>可多选</small></h3>
+              <div id="pcb-files" class="file-list"></div>
+            </div>
+            <div class="file-section">
+              <h3>Holder</h3>
+              <div id="holder-files" class="file-list"></div>
+            </div>
+          </div>
+          <div id="history-browser" hidden>
+            <div class="history-header">
+              <h3>分析记录</h3>
+              <span id="job-count">0</span>
+            </div>
+            <div id="history" class="history"></div>
+          </div>
+        </div>
+        <footer class="files-footer">
+          <span class="status-dot ready"></span>文件保存在本机
+        </footer>
+      </aside>
+      <main id="result-panel" class="result-panel">
+        <div class="command-bar">
+          <div class="function-row">
+            <div class="function-tabs" role="tablist" aria-label="分析功能">
+              <button role="tab" data-kind="preview">预览</button
+              ><button role="tab" data-kind="single_board_pressure">
+                单板压棒</button
+              ><button role="tab" data-kind="height_map">高度图</button
+              ><button role="tab" data-kind="pressure2d">干涉分析</button>
+            </div>
+          </div>
+          <div class="toolbar">
+            <div class="segments" role="group" aria-label="侧面">
+              <button data-side="side1">Side 1</button
+              ><button data-side="side2">Side 2</button>
+            </div>
+            <div class="segments" role="group" aria-label="视图">
+              <button data-view="single" title="单板">Single</button
+              ><button data-view="panel" title="拼板">Panel</button>
+            </div>
+            <label class="surface-label"
+              ><span class="sr-only">图层</span
+              ><select id="surface">
+                <option value="full">Full · 全图层</option>
+                <option value="components">Components · 元件</option>
+                <option value="copper">Copper · 铜层</option>
+                <option value="drawings">Drawings · 绘图</option>
+                <option value="mechanical">Mechanical · 机械</option>
+              </select></label
+            >
+          </div>
+          <div class="primary-action-slot">
+            <div class="preview-action">
+              <span id="preview-status" class="muted" role="status"
+                >自动预览</span
+              >
+              <button id="preview-retry" class="text-button" hidden>
+                重试预览
+              </button>
+            </div>
+            <button id="run" class="primary" hidden>开始分析</button>
+          </div>
+
+          <div id="height-controls" class="height-controls" hidden>
+            <label
+              >高度范围
+              <select
+                id="height-filter"
+                title="固定范围左开右闭；自定义范围包含两端"
+              ></select></label
+            ><span id="custom-range" hidden
+              ><input
+                id="minimum"
+                type="number"
+                min="0"
+                step="0.001"
+                value="2.25"
+                aria-label="最小高度"
+              />
+              —
+              <input
+                id="maximum"
+                type="number"
+                min="0"
+                step="0.001"
+                value="4.75"
+                aria-label="最大高度"
+              />
+              mm</span
+            >
+            <div class="legend" title="颜色保持原生高度分档">
+              <i class="low"></i><i class="mid"></i><i class="high"></i
+              ><i class="tall"></i><span>低 → 高</span>
+            </div>
+          </div>
+          <div class="feedback-slot">
+            <p id="draft-notice" class="draft-notice" hidden>
+              <span></span>参数已更改，尚未执行；下方仍为已生成结果。
+            </p>
+            <div id="analysis-status" class="analysis-status" hidden>
+              <span id="stage"></span
+              ><button id="cancel-analysis" class="text-button">
+                取消分析
+              </button>
+            </div>
+            <div
+              id="connection-status"
+              class="analysis-status"
+              role="status"
+              hidden
+            >
+              <span id="connection-message"></span
+              ><button id="reconnect" class="text-button">重新连接</button>
+            </div>
+            <div id="notice" class="notice" role="alert" hidden></div>
+          </div>
+        </div>
+        <section
+          id="summary-bar"
+          class="summary-bar"
+          hidden
+          aria-label="当前结果统计"
+        >
+          <div id="summary-main" class="summary-main"></div>
+          <div id="summary-sub" class="summary-sub"></div>
+          <details id="summary-more" class="summary-more">
+            <summary aria-label="统计详情">详细统计</summary>
+            <div class="popover" id="summary-details"></div>
+          </details>
+        </section>
+        <section class="viewer-card">
+          <header class="result-context">
+            <div class="result-identity">
+              <h2 id="result-title" class="sr-only">从一份 PCB 开始</h2>
+              <span id="context-label" class="context-label"
+                >添加 PCB，查看布局、高度和压棒接触。</span
+              >
+            </div>
+            <select id="result-select" aria-label="选择结果项" hidden></select
+            ><span id="result-status" class="result-status"></span>
+          </header>
+          <div class="image-feedback-slot">
+            <div
+              id="image-feedback"
+              class="image-feedback"
+              role="status"
+              hidden
+            >
+              <span id="image-status"></span
+              ><button id="image-retry" class="text-button" hidden>
+                重试图片
+              </button>
+            </div>
+          </div>
+          <div id="viewport" class="viewport" tabindex="-1">
+            <div id="empty" class="empty">
+              <svg class="empty-board"><use href="#i-board" /></svg>
+              <h2>看清结构，再开始分析</h2>
+              <p>从左侧文件栏添加 PCB 或 Holder 文件。</p>
+              <button id="upload-empty" class="primary">添加 PCB</button>
+            </div>
+            <img id="pcb-image" alt="PCB 分析图" draggable="false" hidden />
+            <div
+              id="pressure-selection"
+              class="pressure-selection"
+              aria-hidden="true"
+              hidden
+            ></div>
+            <div
+              id="pressure-component-highlight"
+              class="pressure-component-highlight"
+              aria-hidden="true"
+              hidden
+            >
+              <span id="pressure-component-label"></span>
+            </div>
+            <div
+              id="pressure-pick-hint"
+              class="pressure-pick-hint"
+              data-viewer-control
+              hidden
+            >
+              <span id="pressure-pick-status" role="status"></span>
+              <button id="pressure-pick-retry" type="button" hidden>
+                重试点选
+              </button>
+            </div>
+            <section
+              id="pressure-details"
+              class="pressure-details"
+              data-viewer-control
+              aria-labelledby="pressure-detail-title"
+              hidden
+            >
+              <header>
+                <h3 id="pressure-detail-title">压棒详情</h3>
+                <button
+                  id="pressure-detail-close"
+                  type="button"
+                  aria-label="关闭压棒详情"
+                >
+                  ×
+                </button>
+              </header>
+              <div id="pressure-detail-content" aria-live="polite"></div>
+            </section>
+          </div>
+          <footer class="viewer-foot">
+            <div class="download-format">
+              <span id="image-caption">本机计算 · 真实 UNI</span
+              ><select id="download-format" aria-label="下载图像格式">
+                <option value="png">PNG</option>
+                <option value="jpg">JPG</option>
+                <option value="svg" disabled>SVG（待服务更新）</option>
+              </select>
+            </div>
+            <div class="zoom-controls">
+              <button id="zoom-out" aria-label="缩小">−</button
+              ><button id="fit">适应</button
+              ><button id="zoom-in" aria-label="放大">＋</button
+              ><button
+                id="image-download"
+                title="下载图片"
+                aria-label="下载图片"
+                hidden
+              >
+                <svg><use href="#i-download" /></svg>
+              </button>
+            </div>
+          </footer>
+        </section>
+      </main>
+      <aside id="chat-panel" class="chat-panel" aria-labelledby="chat-heading">
+        <header class="pane-heading">
+          <div class="assistant-title">
+            <span class="agent-mark"
+              ><svg><use href="#i-ai" /></svg
+            ></span>
+            <div>
+              <h2 id="chat-heading">MOE6 CD Auto Analysis Agent</h2>
+            </div>
+          </div>
+          <button
+            class="icon-button"
+            data-close-panel="chat"
+            aria-label="关闭 MOE6 CD Auto Analysis Agent"
+          >
+            <svg><use href="#i-close" /></svg></button
+          ><span
+            id="chat-indicator"
+            class="connection-label offline"
+            role="status"
+            >offline</span
+          >
+        </header>
+
+        <div id="messages" class="messages" role="log" aria-live="polite">
+          <div class="welcome">
+            <span class="welcome-icon"
+              ><svg><use href="#i-board" /></svg
+            ></span>
+            <p>选择文件后可发起分析，或查询已有报告。</p>
+          </div>
+        </div>
+        <div class="compose">
+          <div class="compose-box">
+            <textarea
+              id="message"
+              rows="2"
+              placeholder="例如：哪些元件离压棒最近？"
+              aria-label="向分析助手提问"
+            ></textarea>
+            <div class="compose-bottom">
+              <details class="quick-prompts">
+                <summary aria-label="快捷提问">
+                  <svg><use href="#i-plus" /></svg>
+                </summary>
+                <div class="quick-prompts-menu">
+                  <button
+                    data-prompt="请概览主画布当前显示的PCB，简要说明已有分析结果。"
+                  >
+                    概览 PCB</button
+                  ><button
+                    data-prompt="请只分析主画布当前PCB的高度图，筛选高度大于2mm的元件，并说明匹配数量。"
+                  >
+                    筛选高元件
+                  </button>
+                  <button id="batch-chat" type="button">批量所选文件…</button>
+                </div>
+              </details>
+              <details class="model-settings">
+                <summary id="model-label" aria-label="选择模型">
+                  选择模型
+                </summary>
+                <div class="model-popover">
+                  <div class="model-picker-header">
+                    <button
+                      id="speed-toggle"
+                      class="picker-icon"
+                      type="button"
+                      aria-label="切换速度"
+                    >
+                      <svg viewBox="0 0 24 24">
+                        <path d="m13 2-8 11h6l-1 9 9-13h-6Z" />
+                      </svg>
+                    </button>
+                    <output id="reasoning-label" for="reasoning-slider"
+                      >—</output
+                    >
+                    <button
+                      id="model-reset"
+                      class="picker-icon"
+                      type="button"
+                      aria-label="恢复当前会话设置"
+                      title="恢复当前会话设置"
+                    >
+                      <svg viewBox="0 0 24 24">
+                        <path d="M4 9a8 8 0 1 1 0 6M4 3v6h6" />
+                      </svg>
+                    </button>
+                  </div>
+                  <button
+                    id="model-current"
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded="false"
+                  >
+                    选择模型
+                  </button>
+                  <div
+                    id="model-list"
+                    class="model-list"
+                    role="menu"
+                    aria-label="可用模型"
+                    hidden
+                  ></div>
+                  <div class="effort-range">
+                    <span
+                      id="effort-fill"
+                      class="effort-fill"
+                      aria-hidden="true"
+                    ></span>
+                    <div
+                      id="effort-dots"
+                      class="effort-dots"
+                      aria-hidden="true"
+                    ></div>
+                    <input
+                      id="reasoning-slider"
+                      type="range"
+                      min="0"
+                      max="0"
+                      value="0"
+                      step="1"
+                      aria-label="推理强度"
+                    />
+                  </div>
+                </div>
+              </details>
+              <button id="stop-chat" hidden>停止回答</button
+              ><button
+                id="dictate"
+                type="button"
+                aria-label="听写"
+                aria-pressed="false"
+                title="听写"
+              >
+                <svg viewBox="0 0 24 24">
+                  <rect x="9" y="3" width="6" height="12" rx="3" />
+                  <path d="M6 11v2a6 6 0 0 0 12 0v-2M12 19v3m-3 0h6" />
+                </svg></button
+              ><button id="send" class="primary" aria-label="发送">
+                <svg><use href="#i-send" /></svg>
+              </button>
+            </div>
+          </div>
+          <p
+            id="dictation-status"
+            class="dictation-status"
+            role="status"
+            hidden
+          ></p>
+          <p class="chat-error" id="chat-error" hidden></p>
+        </div>
+      </aside>
+    </div>
+    <dialog id="upload-dialog">
+      <form method="dialog">
+        <h2>这些文件属于哪一类？</h2>
+        <p>PCB 与 Holder 使用不同的解析方式。</p>
+        <div>
+          <button value="pcb" class="primary">PCB</button
+          ><button value="holder">Holder</button
+          ><button value="cancel">取消</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog
+      id="remove-file-dialog"
+      aria-labelledby="remove-file-title"
+      aria-describedby="remove-file-description"
+    >
+      <form method="dialog">
+        <h2 id="remove-file-title">删除此文件？</h2>
+        <p id="remove-file-name"></p>
+        <p id="remove-file-description">
+          将从当前工作区移除此文件及其关联结果。原始 UNI
+          和已生成报告仍保留在本机。
+        </p>
+        <div>
+          <button value="cancel" autofocus>取消</button
+          ><button value="remove" class="danger">删除</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="batch-scope-dialog" aria-labelledby="batch-scope-title">
+      <form method="dialog">
+        <h2 id="batch-scope-title">确认本轮批量范围</h2>
+        <p>只对下面明确列出的文件开放本轮访问。下一轮自动恢复主画布范围。</p>
+        <p id="batch-scope-message"></p>
+        <ul id="batch-scope-files"></ul>
+        <div>
+          <button value="cancel" autofocus>取消</button
+          ><button value="confirm" class="primary">确认本轮批量并发送</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="dictation-dialog" aria-labelledby="dictation-title">
+      <h2 id="dictation-title">听写</h2>
+      <p id="dictation-description"></p>
+      <div>
+        <button id="dictation-cancel" type="button">取消</button
+        ><button id="dictation-install" type="button" hidden>
+          准备中文离线模型</button
+        ><button id="dictation-start" type="button" class="primary">
+          开始听写
+        </button>
+      </div>
+    </dialog>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

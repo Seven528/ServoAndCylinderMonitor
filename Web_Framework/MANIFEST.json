@@ -1,0 +1,541 @@
+{
+  "date": "2026-10-16",
+  "purpose": "Website framework source handoff, not PCB engine delivery",
+  "branch": "feature/agent-cli-mode",
+  "base_head": "dc4b3dfe12df18c494e7abf058e54d6faf884f3b",
+  "source_state": "Dirty working-tree snapshot including untracked web source; HEAD alone is insufficient",
+  "source_files": 81,
+  "files": [
+    {
+      "path": "README.zh-CN.md",
+      "bytes": 2983,
+      "sha256": "210c19f94323ed74572c43103715bef54c1535bfa187a7c5ea357609cfc7349e"
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "bytes": 5967,
+      "sha256": "70d30c4b97981a570d070ee0431877303c07d9f13bbb6335006d9271aa5c6077"
+    },
+    {
+      "path": "docs/BUILD_AND_RUN.md",
+      "bytes": 4596,
+      "sha256": "3b3b8e1ec1981b1f4ba06d24a157d530b17cc9f7181e8720febe889c870eec3d"
+    },
+    {
+      "path": "docs/HTTP_AND_STATE.md",
+      "bytes": 3973,
+      "sha256": "f3367f5bd03f6fecdbfb6449b9a10bd94f811e836c16bc854c15dce5d8f28fd6"
+    },
+    {
+      "path": "docs/MAINTENANCE.md",
+      "bytes": 3821,
+      "sha256": "24acc677067d8bb86d10bf36689d88fbcc9a664bef68d97cf6873cb373426490"
+    },
+    {
+      "path": "docs/NEXT_AGENT.md",
+      "bytes": 2195,
+      "sha256": "57730e1421cac201a91574af902d38cf1611387a8cab447258ddcd2ad4669f5f"
+    },
+    {
+      "path": "docs/VALIDATION.md",
+      "bytes": 3065,
+      "sha256": "d5c0519c6bc17b7c90daecc1e49f079f4420093e2c4c3e6be9d19d4b11778e95"
+    },
+    {
+      "path": "source/integrations/azure_agent/pcbuni_adapter/__init__.py",
+      "bytes": 155,
+      "sha256": "fb12d3375505009287601f7c20ae0e481f55322e21189aa524e03d13f40a9ef3",
+      "source_relative_path": "integrations/azure_agent/pcbuni_adapter/__init__.py"
+    },
+    {
+      "path": "source/integrations/azure_agent/pcbuni_adapter/configuration.py",
+      "bytes": 8312,
+      "sha256": "4c9c657cf73ee900c2edac5a6af14b3172685b2b715df92fcb04d0257c76acbd",
+      "source_relative_path": "integrations/azure_agent/pcbuni_adapter/configuration.py"
+    },
+    {
+      "path": "source/integrations/azure_agent/pcbuni_adapter/results.py",
+      "bytes": 4093,
+      "sha256": "b09faa8c862feba35d7600951d8e2cee7d75819b4718b5f7e306d6b1388616fd",
+      "source_relative_path": "integrations/azure_agent/pcbuni_adapter/results.py"
+    },
+    {
+      "path": "source/integrations/azure_agent/pcbuni_adapter/service.py",
+      "bytes": 1910,
+      "sha256": "afb611da55eadefd6e635e63ee07e89b045bc68a328d3c885712ba1c29787fd9",
+      "source_relative_path": "integrations/azure_agent/pcbuni_adapter/service.py"
+    },
+    {
+      "path": "source/integrations/azure_agent/pcbuni_adapter/transports.py",
+      "bytes": 9191,
+      "sha256": "5df7fec31c77976389d53d70802baa7aacd394d1a392da24e8a17ba77d50db93",
+      "source_relative_path": "integrations/azure_agent/pcbuni_adapter/transports.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/DESIGN_REFERENCES.md",
+      "bytes": 7414,
+      "sha256": "b1d25201381f77f8d58c5d2ce9c23e798dc77144283d167f0c165dad645e4577",
+      "source_relative_path": "integrations/local_web_demo/DESIGN_REFERENCES.md"
+    },
+    {
+      "path": "source/integrations/local_web_demo/__init__.py",
+      "bytes": 82,
+      "sha256": "df354da7bec617cf1d6a5158428918553acb22f441c2223afc08b4231f90b8d8",
+      "source_relative_path": "integrations/local_web_demo/__init__.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/analysis.py",
+      "bytes": 12820,
+      "sha256": "29b834d1e2280fa1222bc7b8f8779e994ea0ead55bfa1b64fb417406bccb15cf",
+      "source_relative_path": "integrations/local_web_demo/analysis.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/codex_bridge.py",
+      "bytes": 18317,
+      "sha256": "09ace680aadcf9f95916eaab4ca912b80b483b4e009e9584e94713a7b03f28a3",
+      "source_relative_path": "integrations/local_web_demo/codex_bridge.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/conversation.py",
+      "bytes": 19997,
+      "sha256": "d6961ebf1b95001630fd747274838c44ce3765e78ee950a95225243944b1aa30",
+      "source_relative_path": "integrations/local_web_demo/conversation.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/file_targets.py",
+      "bytes": 10675,
+      "sha256": "f6958d5b2b62bde1fd749c53002fb6a013893a6cb545feb26303912e688e53c1",
+      "source_relative_path": "integrations/local_web_demo/file_targets.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/image_exports.py",
+      "bytes": 6378,
+      "sha256": "671ee7f753b1efb07621f7e6f046463ba559e490ae22698468b9dc57085c5e77",
+      "source_relative_path": "integrations/local_web_demo/image_exports.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/local_speech.py",
+      "bytes": 7591,
+      "sha256": "4dbb67aed95375707ea75f1781e7587e450d7dee06fcb85f8ec3770d704eb79e",
+      "source_relative_path": "integrations/local_web_demo/local_speech.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/native.config.json",
+      "bytes": 308,
+      "sha256": "733152217bcdbb95b7f31b6bd8d13e382c686781f0951cdbb46de812f4ff417b",
+      "source_relative_path": "integrations/local_web_demo/native.config.json"
+    },
+    {
+      "path": "source/integrations/local_web_demo/presentation.py",
+      "bytes": 7829,
+      "sha256": "fa04bfbdf7aa43ef52a72f90d1e7273a8a909840060b75419fc12d8863b6bf7b",
+      "source_relative_path": "integrations/local_web_demo/presentation.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/pressure_picking.py",
+      "bytes": 11008,
+      "sha256": "eb25fd8747f11152336ef01dd54a3827d051b2997ad4a47426ac398a63acf5ca",
+      "source_relative_path": "integrations/local_web_demo/pressure_picking.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/requirements.txt",
+      "bytes": 201,
+      "sha256": "4eed5495f2691fbacff091b9f9ef6b68bd7507fb0e85407ccd0922a0e59b1990",
+      "source_relative_path": "integrations/local_web_demo/requirements.txt"
+    },
+    {
+      "path": "source/integrations/local_web_demo/server.py",
+      "bytes": 19854,
+      "sha256": "a779eaa6a9663b17c0dd150f6022a445eda6b66b4c3dc731892da674d2ea5973",
+      "source_relative_path": "integrations/local_web_demo/server.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/speech/main.swift",
+      "bytes": 4891,
+      "sha256": "f62e11ba23a0d213e6d9d0b0a00aea379bedab13f6a943cedc7edce04079ce10",
+      "source_relative_path": "integrations/local_web_demo/speech/main.swift"
+    },
+    {
+      "path": "source/integrations/local_web_demo/storage.py",
+      "bytes": 10859,
+      "sha256": "75f4dde20892407a7b86a1ad7782f20ecf43cfd85c611022bc06643f330eca25",
+      "source_relative_path": "integrations/local_web_demo/storage.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_auto_preview.mjs",
+      "bytes": 5508,
+      "sha256": "46eff1cc4a8352ed70a2a8f6b40c83d18ab6c2fa9a733d557cc2af54639bce47",
+      "source_relative_path": "integrations/local_web_demo/tests/test_auto_preview.mjs"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_brand_assets.py",
+      "bytes": 2300,
+      "sha256": "12747b11117b4933691d4a5f4618f6d7f6e10802cdace4635f41c2edccbce6bb",
+      "source_relative_path": "integrations/local_web_demo/tests/test_brand_assets.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_canvas_scope.mjs",
+      "bytes": 2030,
+      "sha256": "5198b4a023672a4dd77571e2008fc042e0a95b5bece352d1301294cb8e10f885",
+      "source_relative_path": "integrations/local_web_demo/tests/test_canvas_scope.mjs"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_chat_connection.mjs",
+      "bytes": 1179,
+      "sha256": "5b400e77d1ca92bb7b18ae63be08aa9dbfa6350d6185038eb6ff45f317e563ec",
+      "source_relative_path": "integrations/local_web_demo/tests/test_chat_connection.mjs"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_delivery_ui.mjs",
+      "bytes": 3051,
+      "sha256": "adac0b5de3a0145d6b8a16cdfff90971449939ba4e6b335a9feb305f11e11981",
+      "source_relative_path": "integrations/local_web_demo/tests/test_delivery_ui.mjs"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_demo.py",
+      "bytes": 26375,
+      "sha256": "065da63cedfd7ade57656180e7729d3ed4a82dcfd78fb72ee82a3d7be99fdfde",
+      "source_relative_path": "integrations/local_web_demo/tests/test_demo.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_dictation.mjs",
+      "bytes": 3183,
+      "sha256": "445577126a2021d444f63bacc3a43afd9297211a45cb8af68874d2080211b671",
+      "source_relative_path": "integrations/local_web_demo/tests/test_dictation.mjs"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_direct_dictation.mjs",
+      "bytes": 3008,
+      "sha256": "66489f0c20c29ea70af5628d376e1c2614acf8027d955f40d6e66211e9b92dde",
+      "source_relative_path": "integrations/local_web_demo/tests/test_direct_dictation.mjs"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_exports.py",
+      "bytes": 8178,
+      "sha256": "178ee1b56ccd548e3f9371c689053a8a5c48aaa597b504948da900aa92d98873",
+      "source_relative_path": "integrations/local_web_demo/tests/test_exports.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_file_panel.mjs",
+      "bytes": 5701,
+      "sha256": "72bad93205774abff985f3edea8718af50a20a3139f8dc686375f63d62374e87",
+      "source_relative_path": "integrations/local_web_demo/tests/test_file_panel.mjs"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_file_removal.py",
+      "bytes": 12599,
+      "sha256": "dab2fd4c935ba3312e24a7d54db36b229f49774f35e589224b1b9f0ced36ae87",
+      "source_relative_path": "integrations/local_web_demo/tests/test_file_removal.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_file_targets.py",
+      "bytes": 7264,
+      "sha256": "b9f300169e4c69646020e4de612b756486b153e70d5da5818405bd311cad2ab7",
+      "source_relative_path": "integrations/local_web_demo/tests/test_file_targets.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_image_http.py",
+      "bytes": 6184,
+      "sha256": "31167c7b3429245f8e600e4401e1bfd2634319984075909405818f89ec5c87a6",
+      "source_relative_path": "integrations/local_web_demo/tests/test_image_http.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_image_recovery.mjs",
+      "bytes": 9330,
+      "sha256": "6c1089b5fefe9d57d9ab74f4e9590fac956c068770f10e3d24041de9db0fbd50",
+      "source_relative_path": "integrations/local_web_demo/tests/test_image_recovery.mjs"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_layout_state.mjs",
+      "bytes": 2722,
+      "sha256": "88c5cd6b047486ef3dc2705c9e3da7bced3562979d00b8f44437f3051bfb8085",
+      "source_relative_path": "integrations/local_web_demo/tests/test_layout_state.mjs"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_local_speech.py",
+      "bytes": 5886,
+      "sha256": "b3c03ebd0966c33417ba2679bdd9184ea248e0c09ea55a2646cca5fd5fc357d8",
+      "source_relative_path": "integrations/local_web_demo/tests/test_local_speech.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_model_picker.mjs",
+      "bytes": 1336,
+      "sha256": "d44556f63c08e3467f9a78e00cc8825680809807d822ff3599789fddf97f15c9",
+      "source_relative_path": "integrations/local_web_demo/tests/test_model_picker.mjs"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_presentation.py",
+      "bytes": 7761,
+      "sha256": "999941471d07413156af8b5a7437869a6656b72c55e2e136055b5b27f7091a04",
+      "source_relative_path": "integrations/local_web_demo/tests/test_presentation.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_pressure_details.mjs",
+      "bytes": 7576,
+      "sha256": "f60f99183e9b168716e43a984110cf5649d712bf1722042cad3440d41f55a6e2",
+      "source_relative_path": "integrations/local_web_demo/tests/test_pressure_details.mjs"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_pressure_picking.mjs",
+      "bytes": 11843,
+      "sha256": "0efb5168dd3f96d78460e1f8f732577e1e04551835605dfe96cd6dc3836e8116",
+      "source_relative_path": "integrations/local_web_demo/tests/test_pressure_picking.mjs"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_pressure_picking.py",
+      "bytes": 14290,
+      "sha256": "8528c06d90c3a514859c9838e835eba63f0e89f2d274034078410f7373a08558",
+      "source_relative_path": "integrations/local_web_demo/tests/test_pressure_picking.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_result_state.mjs",
+      "bytes": 7428,
+      "sha256": "4d9b1109a488b88603fe811dd61dd3db9d3be15a3b4239ff0def09909b9b8e93",
+      "source_relative_path": "integrations/local_web_demo/tests/test_result_state.mjs"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_tool_parameters.py",
+      "bytes": 9381,
+      "sha256": "ebaf679f987626fb8b0ff6a0180580e9494ca6dd3e9422df3200a2a1cc3411e4",
+      "source_relative_path": "integrations/local_web_demo/tests/test_tool_parameters.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tests/test_turn_scope.py",
+      "bytes": 12828,
+      "sha256": "a30db9eda5e123f43b4c38b9fc7a9410f442b7288bfcd1475d06419fdb8da59e",
+      "source_relative_path": "integrations/local_web_demo/tests/test_turn_scope.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/tool_parameters.py",
+      "bytes": 4337,
+      "sha256": "ebd16f851d21e17a28c1af1cf28efe4356fbf8e3c29428b51f9545e1f264b141",
+      "source_relative_path": "integrations/local_web_demo/tool_parameters.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/turn_scope.py",
+      "bytes": 8883,
+      "sha256": "dae163dc268d4899d4d57f5214e3a898f7b39cedf430b5abc4919922d6be48b9",
+      "source_relative_path": "integrations/local_web_demo/turn_scope.py"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/app.js",
+      "bytes": 11433,
+      "sha256": "f32ab83a596fefb09d74479b31e02368a0e9bbbd8864a77ace713fd239d18eed",
+      "source_relative_path": "integrations/local_web_demo/web/app.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/assets/BOSCH_ASSETS.md",
+      "bytes": 1832,
+      "sha256": "630dea1a5deb572a53807061d5b4f973a344788f0fc7462b3a150927cee97131",
+      "source_relative_path": "integrations/local_web_demo/web/assets/BOSCH_ASSETS.md"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/assets/bosch-logo.svg",
+      "bytes": 3236,
+      "sha256": "0cf07ebe079e960f9314545f3671256215d964d8f896801150cf29e6bda8a20e",
+      "source_relative_path": "integrations/local_web_demo/web/assets/bosch-logo.svg"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/assets/bosch-supergraphic.svg",
+      "bytes": 8614,
+      "sha256": "bdf7758e5a23f48c33744aef364e6962df44161dbaa9539d30ba8d03c27d9915",
+      "source_relative_path": "integrations/local_web_demo/web/assets/bosch-supergraphic.svg"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/auto-preview.js",
+      "bytes": 5052,
+      "sha256": "c5dbdd6ac2fcc142eaeaaf8abeb2ebd4f228d7bd3c9918ef36a2a66c0d639d08",
+      "source_relative_path": "integrations/local_web_demo/web/auto-preview.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/canvas-scope.js",
+      "bytes": 1143,
+      "sha256": "4adc5c38bc56d1bb60a757112055b60faf4a74d47e8a054dc2e6aa0036223884",
+      "source_relative_path": "integrations/local_web_demo/web/canvas-scope.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/chat-connection.js",
+      "bytes": 472,
+      "sha256": "f959ae01f90f71ddbbd1fd04e954b162545dd417104f7520294c2bb166a22377",
+      "source_relative_path": "integrations/local_web_demo/web/chat-connection.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/chat-panel.js",
+      "bytes": 10379,
+      "sha256": "4274e613e0068a52a49365a71e696f3f41671edaa1316c2c46d31a4357873db2",
+      "source_relative_path": "integrations/local_web_demo/web/chat-panel.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/connection-recovery.js",
+      "bytes": 492,
+      "sha256": "72c2efcaae2a65b9d8112f2fca90b7ae25fb7c65ad0f8cf6bfdfcb89346e9517",
+      "source_relative_path": "integrations/local_web_demo/web/connection-recovery.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/controls.js",
+      "bytes": 3953,
+      "sha256": "5000b47b231a77d2d38463da6d378396783714f8e0682429c8dd12b20aa4fac4",
+      "source_relative_path": "integrations/local_web_demo/web/controls.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/dictation-control.js",
+      "bytes": 8461,
+      "sha256": "1f1fa94a5cf15e6197a703623e490ce78715def0715643e19d9ec85648a24d62",
+      "source_relative_path": "integrations/local_web_demo/web/dictation-control.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/dictation.js",
+      "bytes": 4906,
+      "sha256": "a57b9619240ef3b4104e6b52852f877b2effea52f11448635cf6bba8bdb7e880",
+      "source_relative_path": "integrations/local_web_demo/web/dictation.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/favicon.svg",
+      "bytes": 198,
+      "sha256": "6584beeaa184fd0e57a1a2f1f0aa98c3fa30ad7515c98579a7be1672cfd60921",
+      "source_relative_path": "integrations/local_web_demo/web/favicon.svg"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/file-panel.js",
+      "bytes": 7513,
+      "sha256": "b615f9931a2184a732635938b5d10c917f10d75274a1d00ddbef30cc8b1d9d45",
+      "source_relative_path": "integrations/local_web_demo/web/file-panel.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/history-subjects.js",
+      "bytes": 1056,
+      "sha256": "7c9f821eff4d10f52e7a40a3c1a11da52898631ed54d5b2f5e22f691353515ad",
+      "source_relative_path": "integrations/local_web_demo/web/history-subjects.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/image-download.js",
+      "bytes": 2418,
+      "sha256": "fe072dfac0dab739696f3aeaafd12fa111463420c566c934af65bfb43b1fd571",
+      "source_relative_path": "integrations/local_web_demo/web/image-download.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/image-loader.js",
+      "bytes": 4190,
+      "sha256": "eeca02ab3e4d23f85c5aa080248d6e6ccd9d7fe83b6811e7a8d34c5b83d77f3d",
+      "source_relative_path": "integrations/local_web_demo/web/image-loader.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/index.html",
+      "bytes": 21571,
+      "sha256": "8ee5b8d9f461e7b593cc2b9a2e0778cf6e48dd8d9c77ba6838b76b64883b6e92",
+      "source_relative_path": "integrations/local_web_demo/web/index.html"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/layout-state.js",
+      "bytes": 1622,
+      "sha256": "bca0412e882726579d0a41981688e4480febbe299ad8abfa092dd730af96fec6",
+      "source_relative_path": "integrations/local_web_demo/web/layout-state.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/layout.js",
+      "bytes": 5211,
+      "sha256": "0228dbdb1da6aa819c1c3345d8486093a28c162f5d6d48f61e4280c97b208543",
+      "source_relative_path": "integrations/local_web_demo/web/layout.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/local-recognition.js",
+      "bytes": 4862,
+      "sha256": "9324ee83ba293afa35718d38882b5070b2eefbcc3cd787fed2d41e14826d0c1b",
+      "source_relative_path": "integrations/local_web_demo/web/local-recognition.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/message-downloads.js",
+      "bytes": 2936,
+      "sha256": "3b44059582ef0705f0aca9b883e34963e010bb65e87c31e7fc9c19aab895fddc",
+      "source_relative_path": "integrations/local_web_demo/web/message-downloads.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/model-picker.js",
+      "bytes": 5256,
+      "sha256": "454ac1ba880564a90047c692be1692e2de5c1e2640150bf6a87340c2f7719fcb",
+      "source_relative_path": "integrations/local_web_demo/web/model-picker.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/pressure-details.js",
+      "bytes": 10821,
+      "sha256": "adbca8b78d6d959cfa3f6c40296f6e8c87c4f9525dcec6f4eaa4befd8e3c283c",
+      "source_relative_path": "integrations/local_web_demo/web/pressure-details.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/pressure-picking.js",
+      "bytes": 9063,
+      "sha256": "08bf411b4f87f4c74fdd1164dbec70096cc1f9499eb8c758ebd62c39ca56cb23",
+      "source_relative_path": "integrations/local_web_demo/web/pressure-picking.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/report-request.js",
+      "bytes": 1285,
+      "sha256": "959a8825fa3530054b94c44509a1565f6477bd65e420d828ae46848a4b69c169",
+      "source_relative_path": "integrations/local_web_demo/web/report-request.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/result-state.js",
+      "bytes": 9105,
+      "sha256": "0c3985573921cffb7d348ab68ea2785e4294de64a61d2e707bd700215104d9e9",
+      "source_relative_path": "integrations/local_web_demo/web/result-state.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/result-view.js",
+      "bytes": 3058,
+      "sha256": "605a6bf164429ed81f486cfa13f9ae6c12f99478f5d6a22d3f9ba48cc6321f7b",
+      "source_relative_path": "integrations/local_web_demo/web/result-view.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/style.css",
+      "bytes": 15613,
+      "sha256": "093f2bd4b2c12e55321343019fe363659ae15c53684870bdc051ee4d56e6fdd8",
+      "source_relative_path": "integrations/local_web_demo/web/style.css"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/summary.js",
+      "bytes": 3370,
+      "sha256": "b25054facd3520e3050f1f64d7f7cdbd15a51fe9ba34d4ad63c3c66c696d9abe",
+      "source_relative_path": "integrations/local_web_demo/web/summary.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/text.js",
+      "bytes": 1935,
+      "sha256": "cdec5491210f732dbecd8de79ef47aa2d4c3d908244bd09821e49a1ad8f5b06c",
+      "source_relative_path": "integrations/local_web_demo/web/text.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/transport.js",
+      "bytes": 11012,
+      "sha256": "fb135b3bab4caa3340e2267d03b63737df9e33d5a2f99d76611dd234c51cb6d0",
+      "source_relative_path": "integrations/local_web_demo/web/transport.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/viewer.js",
+      "bytes": 7934,
+      "sha256": "39f9b7c2cf7228aa03fbe8033d427dd10167e78c86c8a02d3d1d5ac0c53094cd",
+      "source_relative_path": "integrations/local_web_demo/web/viewer.js"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/workbench-layout.css",
+      "bytes": 3962,
+      "sha256": "9b8a974639260446cc4a5e1d980a31e6763c57144dcfa1dccce3133b78e48523",
+      "source_relative_path": "integrations/local_web_demo/web/workbench-layout.css"
+    },
+    {
+      "path": "source/integrations/local_web_demo/web/workbench-panels.css",
+      "bytes": 16889,
+      "sha256": "a77d153733b9ca2eadbcec3ad8af443d4bd0c9c2cab1ae4a6f41db8c504eedf0",
+      "source_relative_path": "integrations/local_web_demo/web/workbench-panels.css"
+    },
+    {
+      "path": "tools/check_snapshot.py",
+      "bytes": 3173,
+      "sha256": "4babb4de7fd60376dceda066dd286a638bfff6ae25171d4b00653fe73907701b"
+    },
+    {
+      "path": "tools/verify.py",
+      "bytes": 972,
+      "sha256": "d50679a81e6e931c55322c63ef93552d3d917e0a73b4ffd01f2e5ba491519a2f"
+    }
+  ]
+}

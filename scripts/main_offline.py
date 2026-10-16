@@ -5,7 +5,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 from src.data_handling import parse_ltime, convert_ltime_columns
 
-# CSV 文件路径
+# offline CSV 文件路径
 file_path = r"C:\Users\WSE6SZH\OneDrive - Bosch Group\WSE6SZH\00_DA\000_DA project\ServoAndCylinderMonitor\data\input\MECN_MOE6_RUNTIMEPARAMMONITOR_WEBSCADA_JSON_PROCESSED_V02_202610121415.csv"
 
 # 读取 CSV 文件，转换为 DataFrame

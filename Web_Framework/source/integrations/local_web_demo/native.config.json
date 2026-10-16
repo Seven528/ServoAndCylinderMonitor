@@ -1,0 +1,14 @@
+{
+  "schema_version": "pcb-uni.agent.config.v2",
+  "enabled": true,
+  "features": {
+    "pcb_inspect": true,
+    "pcb_preview": true,
+    "holder_inspect": true,
+    "holder_preview": true,
+    "single_board_pressure": true,
+    "height_map": true,
+    "pressure2d": true,
+    "version_compare": false
+  }
+}

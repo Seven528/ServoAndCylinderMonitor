@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+const source = readFileSync(new URL('../web/layout.js', import.meta.url), 'utf8');
+const { projectPanels } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const both = {files:true, chat:true};
+assert.deepEqual(projectPanels(1440,both,false),{files:'docked',chat:'docked'});
+assert.deepEqual(projectPanels(1000,both,false),{files:'docked',chat:'drawer'});
+assert.deepEqual(projectPanels(390,{files:true,chat:false},false),{files:'drawer',chat:'hidden'});
+assert.deepEqual(projectPanels(1440,both,true),{files:'hidden',chat:'hidden'});
+assert.deepEqual(both,{files:true,chat:true},'Focus projection must preserve prior preferences');
+assert.deepEqual(projectPanels(1440,both,false),{files:'docked',chat:'docked'});
+assert.deepEqual(projectPanels(759,both,false),{files:'drawer',chat:'hidden'});
+assert.equal(projectPanels(760,both,false).files,'docked');
+assert.equal(projectPanels(1250,both,false).chat,'docked');
+console.log('Panel breakpoints and focus restoration: passed');

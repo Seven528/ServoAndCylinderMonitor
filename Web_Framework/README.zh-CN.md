@@ -42,3 +42,7 @@ Web_Framework_Handoff_20261016/
 - 重启意味着新空白会话，不自动备份或恢复旧上传、结果、对话；不要删除磁盘上的原始文件和已有报告。
 - Bosch 素材仅沿用已授权的内部演示用途，不能视为对外发布授权。见 [素材说明](source/integrations/local_web_demo/web/assets/BOSCH_ASSETS.md)。
 - 本次仅交接文件，不修改或重启当前运行的网站。
+
+## 伺服与气缸分析 Agent
+
+仓库内另有独立本地分析集成：[伺服与气缸 Agent 启动和数据说明](source/integrations/servo_cylinder_agent/README.zh-CN.md)。它复用本框架的 Python HTTP 与原生网页结构，读取项目 `data/input` 中的 CSV，在本机执行描述、诊断、生命周期和 RUL 数据准备度分析；不依赖 PCB 原生引擎。运行入口为 `python -m integrations.servo_cylinder_agent.server --port 8890`（工作目录 `Web_Framework/source`）。

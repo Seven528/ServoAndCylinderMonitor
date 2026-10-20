@@ -1,39 +1,33 @@
-import pandas as pd
+"""Run offline servo/cylinder analysis on the checked-in CSV export.
+
+In VS Code, select the project's Python interpreter and choose Run Python File.
+"""
+
 from pathlib import Path
 import sys
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
-from src.data_handling import parse_ltime, convert_ltime_columns
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-# offline CSV 文件路径
-file_path = r"C:\Users\WSE6SZH\OneDrive - Bosch Group\WSE6SZH\00_DA\000_DA project\ServoAndCylinderMonitor\data\input\MECN_MOE6_RUNTIMEPARAMMONITOR_WEBSCADA_JSON_PROCESSED_V02_202610121415.csv"
-
-# 读取 CSV 文件，转换为 DataFrame
-df = pd.read_csv(file_path, encoding="utf-8-sig")
+from src.analysis_agent import write_analysis
 
 
-# 查看数据类型
-print(df.dtypes)
+def main() -> None:
+    input_csv = (
+        PROJECT_ROOT
+        / "data"
+        / "input"
+        / "MECN_MOE6_RUNTIMEPARAMMONITOR_WEBSCADA_JSON_PROCESSED_V02_20261016.csv"
+    )
+    parameter_dictionary = PROJECT_ROOT / "data" / "input" / "param_name_and_type.xlsx"
+    output_dir = PROJECT_ROOT / "data" / "output" / "offline_analysis"
 
-# 查看数据
-df_1000 = df.head(1000)
+    result = write_analysis(input_csv, output_dir, parameter_dictionary)
+    print(f"Analysis finished. Asset groups: {len(result.asset_summary)}")
+    print(f"Records flagged for review: {len(result.anomaly_events)}")
+    print(f"Report: {output_dir / 'analysis_report.md'}")
 
-ltime_columns = [
-    "MOVETOTBASTIME",
-    "MOVETOWORKTIME",
-    "ACTTIME",
-    "AVGTIME",
-    "MINTIME",
-    "MAXTIME",
-    "TOTTIME"
-]
 
-df_1000 = convert_ltime_columns(
-    df=df_1000,
-    columns=ltime_columns,
-    byteorder="little",
-    include_ns=False
-)
-df_1000.to_excel(
-    r"C:\Users\WSE6SZH\OneDrive - Bosch Group\WSE6SZH\00_DA\000_DA project\ServoAndCylinderMonitor\data\output\df_1000.xlsx",
-    index=False)
+if __name__ == "__main__":
+    main()

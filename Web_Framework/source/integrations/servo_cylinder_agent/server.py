@@ -14,9 +14,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, parse_qs
 
-from .analysis import PROJECT_ROOT, analyze_dataset, analyze_frame, save_result
+from .analysis import PROJECT_ROOT, analyze_dataset, analyze_frame, analyze_stream, save_result
 
-from .clickhouse_source import Connection, build_read, read_frame
+from .clickhouse_source import Connection, build_read, read_stream
 from .local_source import inspect_file, validate_file
 from .agent_models import AnswerModels, LOCAL_MODEL
 from src.web_logging import get_logger, log_failure
@@ -24,8 +24,6 @@ from src.web_logging import get_logger, log_failure
 DATA_ROOT = PROJECT_ROOT / "data" / "input"
 OUTPUT_ROOT = PROJECT_ROOT / "data" / "output" / "web_agent_runs"
 WEB_ROOT = Path(__file__).resolve().parent / "web"
-MAX_DATASET_BYTES = 1024 * 1024 * 1024
-MAX_UPLOAD_BYTES = 128 * 1024 * 1024
 
 
 class AgentServer(ThreadingHTTPServer):
@@ -45,6 +43,7 @@ class AgentServer(ThreadingHTTPServer):
         self.local_files = {}
         self.upload_directory = tempfile.TemporaryDirectory(prefix='servo-web-')
         self.upload_bytes = 0
+        self.cancel_events = {}
         get_logger().write_log('INFO', 'web.server', f'SERVER_START | port={self.server_address[1]}')
 
     def datasets(self):
@@ -60,8 +59,7 @@ class AgentServer(ThreadingHTTPServer):
                 size = path.stat().st_size
             except OSError:
                 continue
-            if size <= MAX_DATASET_BYTES:
-                items.append({"id": relative, "name": path.name, "bytes": size})
+            items.append({"id": relative, "name": path.name, "bytes": size})
         return sorted(items, key=lambda item: item["name"], reverse=True)
 
     def resolve_dataset(self, dataset_id: str) -> Path:
@@ -71,8 +69,6 @@ class AgentServer(ThreadingHTTPServer):
         path = (DATA_ROOT / dataset_id).resolve()
         if not path.is_relative_to(DATA_ROOT.resolve()) or path.suffix.lower() not in (".csv", ".xlsx"):
             raise ValueError("数据集路径无效。")
-        if path.stat().st_size > MAX_DATASET_BYTES:
-            raise ValueError("当前版本单个 CSV 上限为 1 GiB。")
         return path
 
     def server_close(self):
@@ -100,11 +96,25 @@ class AgentServer(ThreadingHTTPServer):
             if any(job['status'] in ('queued', 'running') for job in self.jobs.values()):
                 raise ValueError('已有任务正在执行，请等待完成。')
             if len(self.jobs) >= 64:
-                self.jobs.pop(next(iter(self.jobs)))
+                oldest=next(iter(self.jobs))
+                self.jobs.pop(oldest)
+                self.cancel_events.pop(oldest,None)
             jid = 'j_' + uuid.uuid4().hex
             self.jobs[jid] = {'id': jid, 'status': 'queued', 'dataset': label, 'stage': stage}
+            self.cancel_events[jid] = threading.Event()
             get_logger().write_log('INFO', 'web.jobs', f'JOB_QUEUED | job={jid} | source={label!r}')
             return jid
+
+    def progress(self,jid,message):
+        if self.cancel_events[jid].is_set():raise ValueError('分析已取消，未返回部分结果。')
+        with self.lock:self.jobs[jid]['stage']=message
+
+    def cancel_job(self,jid):
+        with self.lock:
+            event=self.cancel_events.get(jid)
+            if event is None:raise ValueError('任务不存在。')
+            event.set()
+        return {'status':'cancelling'}
 
     def start_connection(self, body):
         connection = Connection.parse(body)
@@ -129,7 +139,7 @@ class AgentServer(ThreadingHTTPServer):
         except Exception as error:
             log_failure('web.clickhouse', error, f'CONNECT_FAILED | job={jid}', secrets=(connection.username, connection.password))
             with self.lock:
-                self.jobs[jid].update(status='failed', error=str(error)[:500])
+                self.jobs[jid].update(status='failed', error=('分析已取消，未返回部分结果。' if self.cancel_events[jid].is_set() else str(error)[:500]))
 
     def start_clickhouse_analysis(self, body):
         with self.lock:
@@ -146,25 +156,27 @@ class AgentServer(ThreadingHTTPServer):
         try:
             with self.lock:
                 self.jobs[jid].update(status='running')
-            frame, source = read_frame(selected['connection'], selected['columns'], options)
+            stream, source = read_stream(selected['connection'], selected['columns'], options)
             with self.lock:
                 self.jobs[jid]['stage'] = '已读取数据，正在执行分析'
             dictionary = DATA_ROOT / 'param_name_and_type.xlsx'
-            result = analyze_frame(frame, f"ClickHouse · {source['database']}.{source['table']}",
-                                   dictionary if dictionary.exists() else None, source=source)
+            result = analyze_stream(stream, f"ClickHouse · {source['database']}.{source['table']}",
+                dictionary if dictionary.exists() else None,source=source,
+                progress=lambda message:self.progress(jid,message),cancel=self.cancel_events[jid])
             self._publish(jid, result)
         except Exception as error:
             connection = selected['connection']
             log_failure('web.clickhouse', error, f'ANALYSIS_FAILED | job={jid}', secrets=(connection.username, connection.password))
             with self.lock:
-                self.jobs[jid].update(status='failed', stage='分析失败', error=str(error)[:500])
+                self.jobs[jid].update(status='failed', stage='分析失败', error=('分析已取消，未返回部分结果。' if self.cancel_events[jid].is_set() else str(error)[:500]))
 
     def _publish(self, jid, result):
+        if self.cancel_events[jid].is_set():raise ValueError('分析已取消，未返回部分结果。')
         save_result(result, OUTPUT_ROOT)
         get_logger().write_log('INFO', 'web.analysis', f"ANALYSIS_COMPLETE | job={jid} | run={result['run_id']} | rows={result['descriptive']['top_level']['rows']}")
         with self.lock:
             self.results[result['run_id']] = result
-            self.jobs[jid].update(status='succeeded', stage='分析完成', result=result)
+            self.jobs[jid].update(status='succeeded', stage='全量分析完成', result=result)
             while len(self.results) > 5:
                 self.results.pop(next(iter(self.results)))
 
@@ -189,12 +201,12 @@ class AgentServer(ThreadingHTTPServer):
         try:
             get_logger().write_log('INFO', 'web.files', f'READ_START | job={jid} | name={path.name!r} | sheet={sheet!r}')
             dictionary = DATA_ROOT / 'param_name_and_type.xlsx'
-            result = analyze_dataset(path, dictionary if dictionary.exists() else None, sheet)
+            result = analyze_dataset(path,dictionary if dictionary.exists() else None,sheet,progress=lambda message:self.progress(jid,message),cancel=self.cancel_events[jid])
             self._publish(jid, result)
         except Exception as error:
             log_failure('web.analysis', error, f'ANALYSIS_FAILED | job={jid}')
             with self.lock:
-                self.jobs[jid].update(status='failed', stage='分析失败', error=str(error)[:500])
+                self.jobs[jid].update(status='failed', stage='分析失败', error=('分析已取消，未返回部分结果。' if self.cancel_events[jid].is_set() else str(error)[:500]))
 
     def start_model_connection(self):
         jid = self._new_job('Codex', '正在读取本机 Codex 模型列表')
@@ -211,7 +223,7 @@ class AgentServer(ThreadingHTTPServer):
         except Exception as error:
             log_failure('web.models', error, f'CONNECT_FAILED | job={jid}')
             with self.lock:
-                self.jobs[jid].update(status='failed',error=str(error)[:500])
+                self.jobs[jid].update(status='failed',error=('分析已取消，未返回部分结果。' if self.cancel_events[jid].is_set() else str(error)[:500]))
 
     def start_model_answer(self, run_id, question, settings, consent):
         self.answer_models.validate(settings)
@@ -236,7 +248,7 @@ class AgentServer(ThreadingHTTPServer):
         except Exception as error:
             log_failure('web.models',error,f'ANSWER_FAILED | job={jid}')
             with self.lock:
-                self.jobs[jid].update(status='failed',error=str(error)[:500])
+                self.jobs[jid].update(status='failed',error=('分析已取消，未返回部分结果。' if self.cancel_events[jid].is_set() else str(error)[:500]))
 
     def ask(self, run_id: str, question: str):
         with self.lock:
@@ -330,15 +342,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _upload(self):
         size = int(self.headers.get('Content-Length', '0'))
-        if not 0 < size <= MAX_UPLOAD_BYTES:
-            raise ValueError('浏览器选择文件上限为 128 MiB；更大 CSV 请使用绝对路径。')
+        if size<=0:
+            raise ValueError('请选择非空文件。')
         name = parse_qs(urlsplit(self.path).query).get('filename', [''])[0]
         name = name.replace('\\', '/').rsplit('/', 1)[-1]
         if not name or Path(name).suffix.lower() not in ('.csv', '.xlsx') or len(name) > 240:
             raise ValueError('请选择 CSV 或 XLSX 文件。')
         with self.server.lock:
-            if self.server.upload_bytes + size > 512 * 1024 * 1024:
-                raise ValueError('本次会话文件累计超过 512 MiB，请重启后重新选择，或使用绝对路径。')
             self.server.upload_bytes += size
         folder = Path(self.server.upload_directory.name) / uuid.uuid4().hex
         folder.mkdir()
@@ -378,6 +388,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, self.server.register_local(str(self.server.resolve_dataset(body.get('dataset')))))
             if url.path == '/api/local/register':
                 return self._send(200, self.server.register_local(body.get('path')))
+            if url.path.startswith('/api/jobs/') and url.path.endswith('/cancel'):
+                return self._send(200,self.server.cancel_job(url.path.split('/')[-2]))
             if url.path == '/api/models/connect':
                 return self._send(202,self.server.start_model_connection())
             if url.path == '/api/clickhouse/connect':
@@ -423,14 +435,17 @@ def main(argv=None):
     server = AgentServer(args.port)
     url = f"http://127.0.0.1:{server.server_address[1]}"
     print(f"伺服与气缸分析 Agent：{url}\n本地数据目录：{DATA_ROOT}\n按 Ctrl+C 退出。", flush=True)
-    signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start())
+    def stop(*_):
+        for event in server.cancel_events.values():event.set()
+        threading.Thread(target=server.shutdown,daemon=True).start()
+    signal.signal(signal.SIGTERM,stop)
     if args.open:
         import webbrowser
         webbrowser.open(url)
     try:
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:
-        pass
+        for event in server.cancel_events.values():event.set()
     finally:
         server.answer_models.close()
         server.executor.shutdown(wait=True, cancel_futures=True)

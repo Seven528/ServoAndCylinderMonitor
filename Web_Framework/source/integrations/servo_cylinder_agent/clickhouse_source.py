@@ -1,4 +1,4 @@
-"""Bounded ClickHouse HTTP reads; credentials live only in the server session."""
+"""Streaming ClickHouse HTTP reads; credentials live only in the server session."""
 from __future__ import annotations
 
 import http.client
@@ -6,7 +6,6 @@ import json
 import re
 import socket
 import ssl
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from urllib.parse import urlencode, urlsplit
@@ -16,9 +15,7 @@ import pandas as pd
 
 from src.web_logging import get_logger
 
-MAX_ROWS = 100_000
-MAX_BYTES = 64 * 1024 * 1024
-MAX_LINE = 2 * 1024 * 1024
+BATCH_ROWS = 10_000
 IDENTIFIER = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
 
@@ -33,11 +30,11 @@ ERRORS = {
     62: ('SYNTAX_ERROR', '数据库不支持当前查询语法，请检查版本及 HTTP 网关。'),
     81: ('UNKNOWN_DATABASE', '数据库不存在，请核对库名。'),
     115: ('UNKNOWN_SETTING', '数据库不支持某个查询限制设置，请检查服务器版本。'),
-    158: ('TOO_MANY_ROWS', '扫描行数超过上限（与返回行数不同）；请缩短时间范围并选择站点。'),
-    159: ('TIMEOUT_EXCEEDED', '查询超过执行时间上限，请缩短时间范围并选择站点。'),
+    158: ('TOO_MANY_ROWS', '数据库仍限制扫描行数；应用已请求不限行数，请管理员检查账号/集群不可覆盖的 max_rows_to_read 或 leaf 限制。'),
+    159: ('TIMEOUT_EXCEEDED', '数据库执行超时；应用未设置总执行时限，请管理员检查账号或代理的执行时间限制。'),
     164: ('READONLY', '账号不允许修改查询设置，请让管理员检查账号配置；应用不会修改表数据。'),
     241: ('MEMORY_LIMIT_EXCEEDED', '数据库查询超过内存上限，请缩小查询范围。'),
-    307: ('TOO_MANY_ROWS_OR_BYTES', '返回结果超过数据库行数或大小限制，请缩小范围。'),
+    307: ('TOO_MANY_ROWS_OR_BYTES', '数据库账号仍限制结果数量/大小；应用已请求不限，请管理员检查不可覆盖的设置。'),
     452: ('SETTING_CONSTRAINT_VIOLATION', '查询设置超出账号允许范围，请由管理员检查账号限制。'),
     497: ('ACCESS_DENIED', '账号缺少目标表的 SELECT 权限，请联系管理员。'),
     516: ('AUTHENTICATION_FAILED', '账号认证失败，请检查用户名和密码。'),
@@ -94,51 +91,50 @@ class Connection:
             raise ValueError('请填写 ClickHouse 用户名。')
         return cls(endpoint, **values)
 
-    def query(self, sql, params=None, byte_limit=MAX_BYTES):
-        u = urlsplit(self.endpoint)
-        settings = {'database': self.database, 'readonly': '2', 'max_execution_time': '30',
-                    'max_result_rows': str(MAX_ROWS + 1), 'result_overflow_mode': 'throw',
-                    'max_rows_to_read': '5000000', 'read_overflow_mode': 'throw',
-                    'max_result_bytes': str(MAX_BYTES), 'output_format_json_quote_64bit_integers': '0'}
+    def iter_rows(self,sql,params=None,byte_limit=None):
+        u=urlsplit(self.endpoint)
+        # Zero means unrestricted in ClickHouse. Do not inherit the former
+        # application caps, including distributed leaf limits.
+        settings={'database':self.database,'readonly':'2',
+                  'max_rows_to_read':'0','max_bytes_to_read':'0',
+                  'max_rows_to_read_leaf':'0','max_bytes_to_read_leaf':'0',
+                  'max_result_rows':'0','max_result_bytes':'0',
+                  'max_execution_time':'0','max_execution_time_leaf':'0',
+                  'result_overflow_mode':'throw','read_overflow_mode':'throw',
+                  'output_format_json_quote_64bit_integers':'0'}
         settings.update(params or {})
-        path = (u.path or '/') + '?' + urlencode(settings)
-        conn_class = http.client.HTTPSConnection if u.scheme == 'https' else http.client.HTTPConnection
-        conn = conn_class(u.hostname, u.port, timeout=35)
-        started = time.monotonic()
+        path=(u.path or '/')+'?'+urlencode(settings)
+        conn_class=http.client.HTTPSConnection if u.scheme=='https' else http.client.HTTPConnection
+        # An inactivity timeout, not a total query-duration or record limit.
+        conn=conn_class(u.hostname,u.port,timeout=300)
         try:
-            conn.request('POST', path, body=sql.encode('utf-8'), headers={
-                'X-ClickHouse-User': self.username, 'X-ClickHouse-Key': self.password,
-                'Content-Type': 'text/plain; charset=utf-8', 'Accept-Encoding': 'identity'})
-            response = conn.getresponse()
-            if response.status != 200:
-                code_header = response.getheader('X-ClickHouse-Exception-Code') if hasattr(response, 'getheader') else None
-                raise ClickHouseError(response.status, response.read(8192), code_header)
-            rows, total = [], 0
+            conn.request('POST',path,body=sql.encode('utf-8'),headers={
+                'X-ClickHouse-User':self.username,'X-ClickHouse-Key':self.password,
+                'Content-Type':'text/plain; charset=utf-8','Accept-Encoding':'identity'})
+            response=conn.getresponse()
+            if response.status!=200:
+                code=response.getheader('X-ClickHouse-Exception-Code') if hasattr(response,'getheader') else None
+                raise ClickHouseError(response.status,response.read(8192),code)
+            total=0
             while True:
-                if time.monotonic() - started > 40:
-                    raise ValueError('查询超过 40 秒，请缩小时间范围。')
-                line = response.readline(MAX_LINE + 1)
-                if not line:
-                    break
-                total += len(line)
-                if len(line) > MAX_LINE or total > byte_limit:
-                    raise ValueError('返回数据超过大小限制，请缩小时间范围或按站点筛选。')
-                if not line.strip():
-                    continue
-                try:
-                    row = json.loads(line)
-                except (ValueError, UnicodeError):
-                    raise ClickHouseError(200, line) from None
-                if not isinstance(row, dict):
-                    raise ValueError('API 返回格式无效，需支持 ClickHouse HTTP JSONEachRow。')
-                rows.append(row)
-                if len(rows) > MAX_ROWS + 1:
-                    raise ValueError('返回行数超过限制，请缩小查询范围。')
-            return rows
-        except (OSError, socket.timeout, ssl.SSLError, http.client.HTTPException, UnicodeError):
-            raise ValueError('无法连接 ClickHouse API，请检查网络、地址、端口和 HTTPS 证书。') from None
-        finally:
-            conn.close()
+                line=response.readline()
+                if not line:break
+                total+=len(line)
+                # Only metadata probes opt into a byte bound. Data reads do not.
+                if byte_limit is not None and total>byte_limit:
+                    raise ValueError('连接检查返回的元数据过大。')
+                if not line.strip():continue
+                try:row=json.loads(line)
+                except (ValueError,UnicodeError):raise ClickHouseError(200,line) from None
+                if not isinstance(row,dict):raise ValueError('API 需返回 ClickHouse JSONEachRow 数据。')
+                yield row
+        except (OSError,socket.timeout,ssl.SSLError,http.client.HTTPException,UnicodeError):
+            raise ValueError('ClickHouse 连接中断或长时间没有响应；请检查网络、地址和代理超时。未返回截断分析结果。') from None
+        finally:conn.close()
+
+    def query(self,sql,params=None,byte_limit=None):
+        """For small metadata responses; data analysis uses iter_rows."""
+        return list(self.iter_rows(sql,params,byte_limit))
 
     def check(self):
         if self.query('SELECT 1 AS ok FORMAT JSONEachRow', byte_limit=1024) != [{'ok': 1}]:
@@ -167,12 +163,8 @@ def build_read(connection, columns, options):
         except (ValueError, OverflowError):
             raise ValueError('请输入有效的开始与结束时间（北京时间）。') from None
     start, end = times
-    if not 0 < (end - start).total_seconds() <= 31 * 86400:
-        raise ValueError('结束时间须晚于开始时间，单次时间跨度最多 31 天。')
-    raw_limit = options.get('max_rows', 10000)
-    if isinstance(raw_limit, bool) or not isinstance(raw_limit, int) or not 100 <= raw_limit <= MAX_ROWS:
-        raise ValueError(f'最大行数须为 100–{MAX_ROWS:,} 之间的整数。')
-    limit = raw_limit
+    if end<=start:
+        raise ValueError('结束时间须晚于开始时间。')
     params = {'param_start': start.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')[:23],
               'param_end': end.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')[:23]}
     time_id = identifier(time_column)
@@ -190,42 +182,53 @@ def build_read(connection, columns, options):
     used = {'MSG_TIMESTAMP','PRODUCTTEAM','MACHINETYPE','LINENAME','STATIONNAME','MESSAGENAME',
             'ACTPOS','ACTVEL','ACTTORQUE','SPEED','TARGETPOS','ACTTIME','AVGTIME','MINTIME','MAXTIME','TOTTIME',
             'MOVETOTBASTIME','MOVETOWORKTIME','MOVEMENTCOUNTER','CLASS1DIAG','CLASS2DIAG','CLASS3DIAG','DIAGNO',
-            'EXEUTE','EXECUTE','ACCELERATING','DECELERATING','DRIVEENABLED','DRIVEREADYFORMOVEMENT',
+            'EXEUTE','EXECUTE','ACCELERATING','DECELERATING','DRIVEENABLED','DRIVEREADYFORMOVEMENT','AXISINREFERENCE',
             'ASSET_ID','DEVICE_ID','EQUIPMENT_ID','CYLINDER_ID','AXIS_ID','AGE_CYCLES','AGE_HOURS','AGE_DAYS',
             'OPERATING_HOURS','FAILURE_EVENT','FAILED','FAILURE_FLAG','REPLACED'}
     projection = ', '.join(identifier(name) for name in known if name.upper() in used)
     projection = (projection + ', ') if projection else ''
     # Sorting is done by the shared local pipeline. Avoid an expensive warehouse
-    # ORDER BY before LIMIT; request one extra row to reject truncated windows.
+    # ORDER BY. All matching records are streamed without LIMIT.
     sql = (f"SELECT {projection}toString({time_id}, 'UTC') AS __agent_timestamp_utc "
            f'FROM {identifier(connection.database)}.{identifier(connection.table)} WHERE {where} '
-           f'LIMIT {limit+1} FORMAT JSONEachRow')
+           'FORMAT JSONEachRow')
     metadata = {'kind': 'clickhouse', 'database': connection.database, 'table': connection.table,
                 'start': start.isoformat(), 'end_exclusive': end.isoformat(), 'time_column': time_column,
-                'station_column': station_column if station else None, 'station': station or None, 'max_rows': limit}
+                'station_column': station_column if station else None, 'station': station or None, 'unlimited': True}
     return sql, params, metadata
 
 
-def read_frame(connection, columns, options):
-    sql, params, metadata = build_read(connection, columns, options)
-    get_logger().write_log('INFO', 'web.clickhouse', f"READ_START | table={connection.database}.{connection.table} | start={metadata['start']} | end={metadata['end_exclusive']} | limit={metadata['max_rows']}")
-    rows = connection.query(sql, params)
-    if len(rows) > metadata['max_rows']:
-        raise ValueError('查询结果超过最大行数；为避免截断造成误判，请缩小时间范围或增加站点筛选。')
-    if not rows:
-        raise ValueError('所选时间与站点范围没有数据，请调整筛选条件。')
-    frame = pd.DataFrame(rows)
-    # Legacy alias is accepted for older cached/mocked responses.
+def normalize_frame(frame):
     if '__agent_timestamp_utc' in frame:
-        timestamp = pd.to_datetime(frame.pop('__agent_timestamp_utc'), utc=True, errors='coerce')
+        timestamp=pd.to_datetime(frame.pop('__agent_timestamp_utc'),utc=True,errors='coerce')
     elif '__agent_timestamp_ms' in frame:
-        timestamp = pd.to_datetime(frame.pop('__agent_timestamp_ms'), unit='ms', utc=True, errors='coerce')
-    else:
-        raise ValueError('API 返回数据缺少标准化时间字段。')
-    if timestamp.isna().any():
-        raise ValueError('返回数据包含无效时间戳，请核对时间字段。')
-    frame = frame.drop(columns=[c for c in frame if c.upper() == 'MSG_TIMESTAMP'])
-    frame['MSG_TIMESTAMP'] = timestamp
-    metadata['rows'] = len(frame)
-    get_logger().write_log('INFO', 'web.clickhouse', f'READ_COMPLETE | rows={len(frame)}')
-    return frame, metadata
+        timestamp=pd.to_datetime(frame.pop('__agent_timestamp_ms'),unit='ms',utc=True,errors='coerce')
+    else:raise ValueError('API 返回数据缺少标准化时间字段。')
+    if timestamp.isna().any():raise ValueError('返回数据包含无效时间戳，请核对时间字段。')
+    frame=frame.drop(columns=[c for c in frame if c.upper()=='MSG_TIMESTAMP'])
+    frame['MSG_TIMESTAMP']=timestamp
+    return frame
+
+
+def read_stream(connection,columns,options,batch_rows=BATCH_ROWS):
+    sql,params,metadata=build_read(connection,columns,options)
+    def chunks():
+        count=0;batch=[]
+        get_logger().write_log('INFO','web.clickhouse',f"READ_START | table={connection.database}.{connection.table} | unlimited=True")
+        for row in connection.iter_rows(sql,params):
+            batch.append(row)
+            if len(batch)>=batch_rows:
+                count+=len(batch)
+                yield normalize_frame(pd.DataFrame(batch));batch=[]
+        if batch:
+            count+=len(batch);yield normalize_frame(pd.DataFrame(batch))
+        if not count:raise ValueError('所选时间与站点范围没有数据，请调整筛选条件。')
+        metadata['rows']=count
+        get_logger().write_log('INFO','web.clickhouse',f'READ_COMPLETE | rows={count} | unlimited=True')
+    return chunks(),metadata
+
+
+def read_frame(connection,columns,options):
+    """Compatibility helper, not used by the production streaming pipeline."""
+    stream,metadata=read_stream(connection,columns,options)
+    return pd.concat(stream,ignore_index=True),metadata

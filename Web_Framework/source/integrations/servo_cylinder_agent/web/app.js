@@ -3,7 +3,7 @@ import {setupVoice} from "./voice-input.js";
 import { setupSources } from "./source.js";
 import { setupWorkbench } from "./layout.js";
 const $ = (selector) => document.querySelector(selector);
-const state = { token: "", run: null, serverId: "" };
+const state = { token: "", run: null, serverId: "", dataJob: null };
 
 function esc(value) {
   return String(value ?? "—").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
@@ -173,11 +173,12 @@ async function analyze() {
     sources.setBusy(true); $("#footer-state").textContent = "分析中";
     notice(path.includes('clickhouse') ? '正在读取 ClickHouse 查询范围并分析…' : '正在读取并分析本地文件…');
     const {job_id} = await api(path, {method:'POST',body:JSON.stringify(body)});
+    state.dataJob=job_id; $("#cancel-data-job").hidden=false;
     const result = await pollJob(job_id);
     render(result);
-    notice('分析完成。异常信号和状态为筛查结果，请结合设备定义复核。','success');
+    notice(`全量分析完成：${fmt(result.descriptive.top_level.rows,0)} 条记录全部参与统计。异常为筛查结果，请结合设备定义复核。`,'success');
   } catch (error) { notice(error.message,'error'); $("#footer-state").textContent = "分析未完成"; }
-  finally { sources.setBusy(false); }
+  finally { sources.setBusy(false); state.dataJob=null; $("#cancel-data-job").hidden=true; }
 }
 
 function activateTab(name) {
@@ -209,6 +210,11 @@ async function ask(event) {
 
 document.querySelectorAll(".tab").forEach((button) => button.addEventListener("click", () => activateTab(button.dataset.tab)));
 $("#analyze").addEventListener("click", analyze);
+$("#cancel-data-job").addEventListener('click',async()=>{
+  if(!state.dataJob)return;
+  try{await api(`/api/jobs/${state.dataJob}/cancel`,{method:'POST',body:'{}'});notice('正在取消分析，已生成的旧结果保留。');}
+  catch(error){notice(error.message,'error');}
+});
 $("#ask-form").addEventListener("submit", ask);
 const workbench = setupWorkbench();
 const sources = setupSources({api, pollJob, notice});

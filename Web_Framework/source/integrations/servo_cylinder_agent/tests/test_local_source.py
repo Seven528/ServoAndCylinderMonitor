@@ -28,10 +28,10 @@ class LocalSourceTests(unittest.TestCase):
  def test_reject_relative_missing_or_unsupported_files(self):
   for path in ('relative.csv',self.root/'missing.csv',self.root/'data.json'):
    with self.assertRaises(ValueError):validate_file(path)
- def test_no_silent_row_truncation(self):
-  path=self.root/'large.csv';pd.DataFrame({'ACTTORQUE':range(4)}).to_csv(path,index=False)
-  with patch('integrations.servo_cylinder_agent.local_source.MAX_LOCAL_ROWS',3):
-   with self.assertRaisesRegex(ValueError,'不会截断'):load_frame(path)
+ def test_large_file_metadata_has_no_size_cap(self):
+  path=self.root/'large.csv'
+  with path.open('wb') as stream:stream.truncate(2*1024*1024*1024)
+  self.assertEqual(inspect_file(path)['bytes'],2*1024*1024*1024)
  def test_error_classification_no_remote_sql_or_password(self):
   text=b'Code: 158. DB::Exception: sensitive-test-secret SELECT xxx (TOO_MANY_ROWS)'
   message=str(ClickHouseError(500,text))

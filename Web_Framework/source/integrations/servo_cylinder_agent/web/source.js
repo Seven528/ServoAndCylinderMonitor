@@ -36,7 +36,6 @@ export function setupSources({ api, pollJob, notice }) {
     const file = $('local-file').files[0];
     if (!file) return;
     await selectFile(async () => {
-      if (file.size > 128 * 1024 * 1024) throw new Error('浏览器选择上限 128 MiB，更大 CSV 请使用绝对路径。');
       return api(`/api/local/upload?filename=${encodeURIComponent(file.name)}`, {method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});
     });
     $('local-file').value = '';
@@ -94,7 +93,6 @@ export function setupSources({ api, pollJob, notice }) {
       return {path:'/api/clickhouse/analyze', body:{connection_id:connectionId, options:{
         time_column:$('ch-time-column').value, start, end,
         station_column:$('ch-station-column').value, station:$('ch-station').value,
-        max_rows:Number($('ch-max-rows').value),
       }}};
     },
   };

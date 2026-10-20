@@ -141,6 +141,11 @@ def _predictive(raw, result):
     event_count = 0
     if event_column:
         event_count = int(raw[event_column].astype(str).str.lower().isin(["true", "1", "yes", "failed", "replaced"]).sum())
+    return predictive_summary(cols,int(assets or 0),event_count,result.data_quality.get('time_window_hours',0))
+
+
+def predictive_summary(cols,assets,event_count,window_hours):
+    event_column=cols["event"]
     reasons = []
     if not cols["asset"]:
         reasons.append("缺少能区分单个伺服轴/气缸的资产唯一 ID。")
@@ -150,7 +155,7 @@ def _predictive(raw, result):
         reasons.append("缺少失效/更换/维护事件标签，无法监督拟合寿命分布。")
     elif event_count < 30:
         reasons.append(f"事件标签只有 {event_count} 条；当前流程至少要求 30 个确认事件作为初筛门槛。")
-    if result.data_quality.get("time_window_hours", 0) < 24 * 30:
+    if window_hours < 24 * 30:
         reasons.append("本次时间覆盖不足 30 天，暂不拟合时间退化或阈值到达趋势。")
     return {
         "status": "not_ready" if reasons else "eligible_for_model_review",
@@ -168,13 +173,34 @@ def _predictive(raw, result):
     }
 
 
-def analyze_dataset(csv_path: Path, dictionary_path: Path | None = None, sheet=None) -> dict:
+def analyze_dataset(csv_path: Path, dictionary_path: Path | None = None, sheet=None,progress=None,cancel=None) -> dict:
     """Analyze a selected CSV export and return compact, serializable views."""
     # Use the known PLC dictionary as metadata only; it does not define fault thresholds.
-    from .local_source import load_frame
-    raw, source = load_frame(csv_path, sheet)
-    name = csv_path.name + (f" · {source['sheet']}" if source['sheet'] else '')
-    return analyze_frame(raw, name, dictionary_path, csv_path.stat().st_size, source)
+    from .local_source import local_stream
+    csv_path=Path(csv_path).resolve()
+    stream,source=local_stream(csv_path,sheet)
+    name=csv_path.name+(f" · {source['sheet']}" if source['sheet'] else '')
+    return analyze_stream(stream,name,dictionary_path,csv_path.stat().st_size,source,progress,cancel)
+
+
+def analyze_stream(stream,dataset_name,dictionary_path=None,source_bytes=None,source=None,progress=None,cancel=None):
+    from .disk_analysis import DiskAnalysis
+    from src.web_logging import get_logger
+    engine=DiskAnalysis(progress,cancel)
+    try:
+        for frame in stream:
+            if cancel is not None and cancel.is_set():raise ValueError('分析已取消，未返回部分结果。')
+            engine.add(frame)
+        if not engine.rows:raise ValueError('所选数据范围没有记录。')
+        engine.prepare()
+        if cancel is not None and cancel.is_set():raise ValueError('分析已取消，未返回部分结果。')
+        result=engine.result(dataset_name,dictionary_path,source or {},source_bytes)
+        get_logger().write_log('INFO','web.analysis',f'FULL_ANALYSIS_COMPLETE | rows={engine.rows} | disk_statistics=True')
+        return result
+    finally:
+        close=getattr(stream,'close',None)
+        if close:close()
+        engine.close()
 
 
 def analyze_frame(raw, dataset_name, dictionary_path=None, source_bytes=None, source=None):

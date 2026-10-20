@@ -15,6 +15,8 @@
       <symbol id="i-ai" viewBox="0 0 24 24"><path d="m10 3 2.3 6.7L19 12l-6.7 2.3L10 21l-2.3-6.7L1 12l6.7-2.3ZM19 2l.9 2.1L22 5l-2.1.9L19 8l-.9-2.1L16 5l2.1-.9Z"/></symbol>
       <symbol id="i-focus" viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></symbol>
       <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
       <symbol id="i-send" viewBox="0 0 24 24"><path d="M20 5v7a3 3 0 0 1-3 3H4m5-5-5 5 5 5"/></symbol>
     </defs></svg>
     <header class="topbar">
@@ -36,8 +38,18 @@
           <div class="source-intro"><svg><use href="#i-folder"/></svg><strong>选择数据源</strong><p>选择站点运行数据，查看设备状态与异常线索。</p></div>
           <div class="run-card">
             <fieldset id="source-controls" class="source-controls">
-              <label for="source-kind">数据源类型</label><select id="source-kind"><option value="csv">本地 CSV</option><option value="clickhouse">ClickHouse API 数据库</option></select>
-              <div id="csv-source" class="source-fields"><label for="dataset">CSV 数据文件</label><select id="dataset" aria-label="选择 CSV 数据集"></select><div id="source-meta" class="muted">读取项目 data/input 中的 CSV</div></div>
+              <label for="source-kind">数据源类型</label><select id="source-kind"><option value="csv">本地 CSV / XLSX</option><option value="clickhouse">ClickHouse API 数据库</option></select>
+              <div id="csv-source" class="source-fields">
+                <button id="pick-local-file" class="secondary" type="button">选择 CSV / XLSX 文件</button>
+                <input id="local-file" type="file" accept=".csv,.xlsx" hidden/>
+                <p class="muted">从电脑选择文件；XLSX 可选择工作表。</p>
+                <label for="local-path">或输入本机文件绝对路径</label>
+                <input id="local-path" placeholder="例如 D:\data\runtime.xlsx" autocomplete="off"/>
+                <button id="use-local-path" type="button">使用此路径</button>
+                <p id="local-selection" class="source-status" role="status" aria-live="polite">请选择文件，或使用项目目录中的数据。</p>
+                <div id="local-sheets" hidden><label for="local-sheet">数据工作表</label><select id="local-sheet"></select></div>
+                <details class="project-files"><summary>项目目录中的文件</summary><label for="dataset">CSV / XLSX 数据文件</label><select id="dataset" aria-label="选择项目数据集"></select><button id="use-project-file" type="button">使用项目文件</button><div id="source-meta" class="muted">项目 data/input 中的数据</div></details>
+              </div>
               <div id="clickhouse-source" class="source-fields" hidden>
                 <label for="ch-endpoint">HTTP / HTTPS API 地址</label><input id="ch-endpoint" type="url" placeholder="http://主机:8123" autocomplete="off"/>
                 <label for="ch-database">数据库</label><input id="ch-database" placeholder="KAFKA" autocomplete="off"/>
@@ -100,10 +112,39 @@
       </main>
       <aside id="chat-panel" class="chat-panel" aria-labelledby="chat-heading">
         <header class="pane-heading"><div class="assistant-title"><span class="agent-icon"><svg><use href="#i-ai"/></svg></span><div><h2 id="chat-heading">设备分析 Agent</h2><small>Servo &amp; Cylinder Analysis</small></div></div><button class="icon-button" data-close-panel="chat" aria-label="关闭 Agent 面板"><svg><use href="#i-close"/></svg></button></header>
-        <div class="agent-box"><div class="agent-main"><div class="agent-welcome"><span class="welcome-icon"><svg><use href="#i-ai"/></svg></span><h3>从设备信号中寻找线索</h3><p id="agent-context">运行分析后，可以询问当前数据中的运行状态、异常与寿命准备度。</p></div><div id="answer" class="answer" role="status" aria-live="polite" hidden></div></div></div>
-        <form id="ask-form" class="compose"><label class="sr-only" for="question">向分析 Agent 提问</label><textarea id="question" rows="3" maxlength="1000" placeholder="请先运行数据分析" disabled></textarea><div class="compose-bottom"><span>基于当前本地分析结果</span><button id="ask-submit" class="primary" type="submit" disabled><svg><use href="#i-send"/></svg>发送</button></div></form>
+        <div class="agent-box"><div class="agent-main"><div class="agent-welcome"><span class="welcome-icon"><svg><use href="#i-ai"/></svg></span><h3>从设备信号中寻找线索</h3><p id="agent-context">运行分析后，可以询问当前数据中的运行状态、异常与寿命准备度。</p></div><div id="answer-engine" class="answer-engine" hidden></div><div id="answer" class="answer" role="status" aria-live="polite" hidden></div></div></div>
+        <form id="ask-form" class="compose">
+          <div class="compose-card">
+            <label class="sr-only" for="question">向分析 Agent 提问</label>
+            <textarea id="question" rows="3" maxlength="1000" placeholder="输入问题，或点击麦克风听写…"></textarea>
+            <div class="compose-bottom">
+              <details id="model-menu" class="model-settings">
+                <summary aria-label="选择问答模型"><span id="model-current-label">本地统计问答</span><svg><use href="#i-down"/></svg></summary>
+                <div class="model-popover">
+                  <div class="model-popover-title">问答模型</div>
+                  <label for="answer-model">模型</label><select id="answer-model"><option value="local-statistical-v1">本地统计问答</option></select>
+                  <div id="model-options" hidden><label for="model-effort">推理强度</label><select id="model-effort"></select><label for="model-speed">响应速度</label><select id="model-speed"></select></div>
+                  <button id="connect-models" type="button">连接本机 Codex</button>
+                  <p id="model-status" role="status">本地统计问答无需模型连接。</p>
+                </div>
+              </details>
+              <button id="voice-toggle" class="icon-button" type="button" aria-label="语音输入" aria-pressed="false" title="语音输入"><svg><use href="#i-mic"/></svg></button>
+              <button id="ask-submit" class="primary send-button" type="submit" disabled aria-label="发送问题" title="发送"><svg><use href="#i-send"/></svg></button>
+            </div>
+          </div>
+          <label id="model-consent-row" class="model-consent" hidden><input id="model-consent" type="checkbox"/>将本次问题和分析汇总发送至所选模型</label>
+          <p id="voice-status" class="voice-status" role="status" hidden></p>
+          <p class="compose-hint">语音只填入文字，点击发送后提问</p>
+        </form>
       </aside>
     </div>
+    <dialog id="voice-dialog" class="voice-dialog" aria-labelledby="voice-title">
+      <h2 id="voice-title">语音输入</h2>
+      <label for="voice-mode">识别方式</label><select id="voice-mode"><option id="voice-local-option" value="local">本机离线识别</option><option value="browser">浏览器语音服务（可能联网）</option></select>
+      <p id="voice-description"></p>
+      <label id="voice-remote-consent-row" class="model-consent" hidden><input id="voice-remote-consent" type="checkbox"/>允许浏览器将本次音频发送给其语音服务</label>
+      <div class="voice-actions"><button id="voice-close" type="button">取消</button><button id="voice-install" type="button" hidden>下载中文语言包</button><button id="voice-start" class="primary" type="button">开始听写</button></div>
+    </dialog>
     <script type="module" src="/web/app.js"></script>
   </body>
 </html>

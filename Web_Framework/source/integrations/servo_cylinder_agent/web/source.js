@@ -1,15 +1,47 @@
 // Source configuration and connection UI. Passwords are never persisted in browser storage.
 export function setupSources({ api, pollJob, notice }) {
   const $ = (id) => document.getElementById(id);
-  let connectionId = '', csvAvailable = false, busy = false;
+  let connectionId = '', busy = false, localFileId = '';
   function status(message, kind = '') { $('ch-status').textContent = message; $('ch-status').className = `source-status ${kind}`; }
   function refresh() {
     const remote = $('source-kind').value === 'clickhouse';
     $('csv-source').hidden = remote; $('clickhouse-source').hidden = !remote;
-    $('analyze').disabled = busy || (remote ? !connectionId : !csvAvailable);
+    $('analyze').disabled = busy || (remote ? !connectionId : !localFileId);
     $('source-controls').disabled = busy;
   }
   function setBusy(value) { busy = value; refresh(); }
+  function selectedFile(result) {
+    localFileId = result.file_id;
+    $('local-selection').textContent = `已选择：${result.name}（${(result.bytes / 1024 / 1024).toFixed(1)} MiB）`;
+    $('local-selection').className = 'source-status success';
+    $('local-sheet').replaceChildren(...result.sheets.map((name) => new Option(name, name)));
+    $('local-sheets').hidden = result.sheets.length === 0;
+  }
+  async function selectFile(action) {
+    localFileId = ''; $('local-sheets').hidden = true;
+    $('local-selection').textContent = '正在检查所选文件…';
+    setBusy(true);
+    try { selectedFile(await action()); }
+    catch (error) { $('local-selection').textContent = error.message; $('local-selection').className = 'source-status error'; }
+    finally { setBusy(false); }
+  }
+  async function selectProject() {
+    if (!$('dataset').value) return;
+    await selectFile(() => api('/api/local/project', {method:'POST',body:JSON.stringify({dataset:$('dataset').value})}));
+  }
+  $('use-project-file').addEventListener('click', selectProject);
+  $('dataset').addEventListener('change', selectProject);
+  $('pick-local-file').addEventListener('click', () => $('local-file').click());
+  $('local-file').addEventListener('change', async () => {
+    const file = $('local-file').files[0];
+    if (!file) return;
+    await selectFile(async () => {
+      if (file.size > 128 * 1024 * 1024) throw new Error('浏览器选择上限 128 MiB，更大 CSV 请使用绝对路径。');
+      return api(`/api/local/upload?filename=${encodeURIComponent(file.name)}`, {method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});
+    });
+    $('local-file').value = '';
+  });
+  $('use-local-path').addEventListener('click', () => selectFile(() => api('/api/local/register', {method:'POST',body:JSON.stringify({path:$('local-path').value})})));
   function invalidate() {
     connectionId = ''; $('ch-query').hidden = true;
     status('连接配置已更改，请重新检查连接。'); refresh();
@@ -47,9 +79,15 @@ export function setupSources({ api, pollJob, notice }) {
   refresh();
   return {
     setBusy,
-    setCsvAvailable(value) { csvAvailable = value; refresh(); },
+    selectProject,
+    setCsvAvailable(value) { $('use-project-file').disabled = !value; refresh(); },
     request() {
-      if ($('source-kind').value === 'csv') return {path:'/api/analyze', body:{dataset:$('dataset').value}};
+      if ($('source-kind').value === 'csv') {
+        if (!localFileId) throw new Error('请先选择有效的本地文件。');
+        const body = {local_file_id:localFileId};
+        if (!$('local-sheets').hidden) body.sheet = $('local-sheet').value;
+        return {path:'/api/analyze',body};
+      }
       if (!connectionId) throw new Error('请先检查 ClickHouse 连接。');
       const start = $('ch-start').value, end = $('ch-end').value;
       if (!start || !end) throw new Error('请选择开始和结束时间。');

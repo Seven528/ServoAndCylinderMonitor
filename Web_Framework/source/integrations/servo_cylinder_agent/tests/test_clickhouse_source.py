@@ -21,8 +21,8 @@ class ConnectorTests(unittest.TestCase):
  def test_parameterized_filter_and_half_open_window(self):
   sql,params,meta=build_read(self.connection,COLUMNS,OPTIONS)
   self.assertNotIn(OPTIONS['station'],sql);self.assertEqual(params['param_station'],OPTIONS['station'])
-  self.assertIn('< fromUnixTimestamp64Milli',sql);self.assertIn('LIMIT 101',sql)
-  self.assertTrue(meta['start'].endswith('+08:00'));self.assertEqual(int(params['param_end'])-int(params['param_start']),3600000)
+  self.assertIn('< toDateTime64',sql);self.assertIn('LIMIT 101',sql);self.assertNotIn('ORDER BY',sql)
+  self.assertTrue(meta['start'].endswith('+08:00'));self.assertEqual(params['param_start'],'2026-10-20 00:00:00.000');self.assertEqual(params['param_end'],'2026-10-20 01:00:00.000')
  def test_bad_identifiers(self):
   for key in ('database','table'):
    with self.assertRaises(ValueError):Connection.parse({**CONFIG,key:'a; DROP TABLE x'})

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import errno
+import errno  # cspell:ignore EADDRINUSE
 import http.client
 import json
-import sys
 import webbrowser
-from pathlib import Path
+
+from src.web_logging import get_logger
 
 # 可直接修改；无需配置命令行参数或切换工作目录。
 WEB_PORT = 8890
@@ -29,11 +29,8 @@ def _is_agent_running(port: int) -> bool:
 
 
 def main():
-    project_root = Path(__file__).resolve().parent
-    source_root = project_root / 'Web_Framework' / 'source'
-    sys.path.insert(0, str(source_root))
     try:
-        from integrations.servo_cylinder_agent.server import main as serve
+        from Web_Framework.source.integrations.servo_cylinder_agent.server import main as serve
     except ModuleNotFoundError as error:
         print(f'当前 Python 环境缺少依赖：{error.name}。')
         print('请在 VS Code 选择已安装 pandas、numpy、openpyxl 的 Python 解释器。')
@@ -51,6 +48,7 @@ def main():
         if not _is_agent_running(WEB_PORT):
             print(f'端口 {WEB_PORT} 被其他程序占用，请修改本文件的 WEB_PORT 后再运行。')
             raise SystemExit(1) from None
+        get_logger().write_log('INFO', 'web.launcher', f'existing_service | port={WEB_PORT}')
         print(f'分析工作台已在运行，打开现有服务：{url}', flush=True)
         print('如需重启服务，请先在原启动终端按 Ctrl+C。', flush=True)
         if OPEN_BROWSER:
@@ -58,4 +56,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    with get_logger().run(__file__):
+        main()

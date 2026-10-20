@@ -50,6 +50,7 @@ export function setupWorkbench() {
   }
   $('drawer-backdrop').addEventListener('click', closeDrawer);
   document.addEventListener('keydown', (event) => {
+    if (document.querySelector('dialog[open]')) return;
     if (event.key === 'Escape') {
       if (focus) { focus = false; apply(); $('focus-view').focus(); }
       else closeDrawer();
@@ -59,7 +60,7 @@ export function setupWorkbench() {
       const modes = projectPanels(window.innerWidth, preferences, focus);
       const name = ['files', 'chat'].find((item) => modes[item] === 'drawer');
       if (!name) return;
-      const controls = [...$(`${name}-panel`).querySelectorAll('button,select,textarea,input')].filter((item) => !item.matches(':disabled') && item.getClientRects().length);
+      const controls = [...$(`${name}-panel`).querySelectorAll('button,select,textarea,input,summary,[tabindex]:not([tabindex="-1"])')].filter((item) => !item.matches(':disabled') && item.getClientRects().length);
       const first = controls[0], last = controls.at(-1);
       if (event.shiftKey && (document.activeElement === first || !controls.includes(document.activeElement))) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && (document.activeElement === last || !controls.includes(document.activeElement))) { event.preventDefault(); first.focus(); }

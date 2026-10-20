@@ -19,7 +19,9 @@ class Warehouse(BaseHTTPRequestHandler):
   if sql.startswith('SELECT 1 '):rows=[{'ok':1}]
   elif sql.startswith('DESCRIBE '):rows=[{'name':'MSG_TIMESTAMP','type':'DateTime64(3)'},{'name':'STATIONNAME','type':'String'},{'name':'ACTTORQUE','type':'Float64'}]
   else:
-   start=int(parse_qs(urlsplit(self.path).query)['param_start'][0])
+   from datetime import datetime, timezone
+   text=parse_qs(urlsplit(self.path).query)['param_start'][0]
+   start=int(datetime.fromisoformat(text).replace(tzinfo=timezone.utc).timestamp()*1000)
    rows=[{'MSG_TIMESTAMP':'2026-10-20 08:00:00','__agent_timestamp_ms':start+i*1000,'STATIONNAME':'ST401','ACTTORQUE':float(i%5),'ACTVEL':2.0} for i in range(50)]
   data=('\n'.join(json.dumps(row) for row in rows)+'\n').encode()
   self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)

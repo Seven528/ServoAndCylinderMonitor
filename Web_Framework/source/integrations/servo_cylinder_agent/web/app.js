@@ -1,3 +1,5 @@
+import {setupChatControls} from "./chat-controls.js";
+import {setupVoice} from "./voice-input.js";
 import { setupSources } from "./source.js";
 import { setupWorkbench } from "./layout.js";
 const $ = (selector) => document.querySelector(selector);
@@ -38,11 +40,12 @@ async function connect() {
     option.textContent = `${item.name} · ${humanBytes(item.bytes)}`; option.dataset.bytes = item.bytes; picker.append(option);
   }
   if (!datasets.length) {
-    const option = document.createElement("option"); option.textContent = "data/input 中没有 CSV"; picker.append(option);
-    sources.setCsvAvailable(false); notice("请先把 CSV 导出文件放到项目 data/input 目录。", "error"); return;
+    const option = document.createElement("option"); option.textContent = "项目目录中没有数据文件"; picker.append(option);
+    sources.setCsvAvailable(false); notice("请选择 CSV / XLSX 文件或输入绝对路径。", "error"); return;
   }
   sources.setCsvAvailable(true);
-  $("#source-meta").textContent = `${datasets.length} 个 CSV 可用 · 单文件上限 1 GiB · 仅在本机处理`;
+  await sources.selectProject();
+  $("#source-meta").textContent = `${datasets.length} 个项目文件可用 · 可另选 CSV / XLSX 文件`;
   notice("本地 Agent 已连接。请选择数据集并运行完整分析。", "success");
 }
 
@@ -75,7 +78,7 @@ function renderKpis(data) {
   const top = data.descriptive.top_level;
   const anomalyRows = data.diagnostic.event_record_count;
   const items = [
-    ["采样记录", fmt(top.rows, 0), "CSV 行数"],
+    ["采样记录", fmt(top.rows, 0), "所选范围的记录行数"],
     ["资产分组", fmt(top.asset_groups, 0), "依据现有设备/站点字段"],
     ["异常筛查快照", fmt(anomalyRows, 0), "逐行计数，不等同故障次数"],
     ["数据时间窗", `${fmt(top.window_hours, 2)} h`, "按源时间戳计算"],
@@ -146,7 +149,8 @@ function render(data) {
   renderOverview(data); renderDiagnostics(data); renderLifecycle(data); renderPredictive(data);
   $("#footer-state").textContent = `本地运行 ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`;
   $("#answer").hidden = true;
-  $("#question").disabled = false; $("#ask-submit").disabled = false;
+  $("#answer-engine").hidden = true;
+  $("#question").disabled = false; $("#ask-submit").disabled = voice.active || composer.busy;
   $("#question").placeholder = "例如：哪些异常最需要复核？";
   workbench.showResults();
   $("#agent-context").textContent = `当前分析：${data.dataset}。可询问异常、设备状态或剩余寿命准备度。`;
@@ -167,7 +171,7 @@ async function analyze() {
   try {
     const {path, body} = sources.request();
     sources.setBusy(true); $("#footer-state").textContent = "分析中";
-    notice(path.includes('clickhouse') ? '正在读取 ClickHouse 查询范围并分析…' : '正在本机读取并分析 CSV…');
+    notice(path.includes('clickhouse') ? '正在读取 ClickHouse 查询范围并分析…' : '正在读取并分析本地文件…');
     const {job_id} = await api(path, {method:'POST',body:JSON.stringify(body)});
     const result = await pollJob(job_id);
     render(result);
@@ -184,14 +188,23 @@ function activateTab(name) {
 
 async function ask(event) {
   event.preventDefault();
-  if (!state.run) return;
+  if (!state.run || composer.busy || voice.active) return;
   const prompt = $("#question").value.trim(); if (!prompt) return;
-  const answer = $("#answer"); answer.hidden = false; answer.textContent = "正在根据本地分析结果整理…";
+  const runId = state.run.run_id;
+  const answer = $("#answer");
   try {
-    const result = await api("/api/ask", { method: "POST", body: JSON.stringify({ run_id: state.run.run_id, question: prompt }) });
+    const selected = composer.request();
+    voice.cancel(); composer.setBusy(true); $("#ask-submit").disabled = true;
+    answer.hidden = false; answer.textContent = selected.settings.model === 'local-statistical-v1' ? '正在根据本地分析结果整理…' : '所选模型正在回答…';
+    let result = await api('/api/ask',{method:'POST',body:JSON.stringify({run_id:runId,question:prompt,...selected})});
+    if (result.job_id) result = await pollJob(result.job_id,(message)=>{answer.textContent=message;});
+    if (state.run?.run_id !== runId) return;
     const details = result.evidence;
-    answer.textContent = `${result.answer}\n\n${JSON.stringify(details, null, 2)}${result.notes ? `\n\n${result.notes.join("\n")}` : ""}`;
-  } catch (error) { answer.textContent = error.message; }
+    answer.textContent = result.answer + (details ? '\n\n'+JSON.stringify(details,null,2) : '') + (result.notes ? '\n\n'+result.notes.join('\n') : '');
+    $("#answer-engine").textContent = result.engine === 'codex' ? `${result.settings.model} · ${result.settings.effort} · ${result.settings.speed}` : '本地统计问答';
+    $("#answer-engine").hidden = false;
+  } catch (error) { answer.hidden=false; answer.textContent = error.message; }
+  finally {composer.setBusy(false); $("#ask-submit").disabled = !state.run;}
 }
 
 document.querySelectorAll(".tab").forEach((button) => button.addEventListener("click", () => activateTab(button.dataset.tab)));
@@ -199,4 +212,7 @@ $("#analyze").addEventListener("click", analyze);
 $("#ask-form").addEventListener("submit", ask);
 const workbench = setupWorkbench();
 const sources = setupSources({api, pollJob, notice});
+const composer = setupChatControls({api,pollJob});
+const voice = setupVoice((active)=>{$('#ask-submit').disabled=active||!state.run||composer.busy;});
+composer.initialize().catch(()=>{});
 connect().catch((error) => { $("#connection-label").textContent = "未连接"; notice(`连接失败：${error.message}`, "error"); });

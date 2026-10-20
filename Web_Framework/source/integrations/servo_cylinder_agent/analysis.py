@@ -168,11 +168,13 @@ def _predictive(raw, result):
     }
 
 
-def analyze_dataset(csv_path: Path, dictionary_path: Path | None = None) -> dict:
+def analyze_dataset(csv_path: Path, dictionary_path: Path | None = None, sheet=None) -> dict:
     """Analyze a selected CSV export and return compact, serializable views."""
     # Use the known PLC dictionary as metadata only; it does not define fault thresholds.
-    raw = pd.read_csv(csv_path, encoding="utf-8-sig", low_memory=False)
-    return analyze_frame(raw, csv_path.name, dictionary_path, csv_path.stat().st_size)
+    from .local_source import load_frame
+    raw, source = load_frame(csv_path, sheet)
+    name = csv_path.name + (f" · {source['sheet']}" if source['sheet'] else '')
+    return analyze_frame(raw, name, dictionary_path, csv_path.stat().st_size, source)
 
 
 def analyze_frame(raw, dataset_name, dictionary_path=None, source_bytes=None, source=None):

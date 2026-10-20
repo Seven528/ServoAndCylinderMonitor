@@ -5,22 +5,27 @@ from __future__ import annotations
 import json
 import mimetypes
 import secrets
+import tempfile
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, parse_qs
 
 from .analysis import PROJECT_ROOT, analyze_dataset, analyze_frame, save_result
 
 from .clickhouse_source import Connection, build_read, read_frame
+from .local_source import inspect_file, validate_file
+from .agent_models import AnswerModels, LOCAL_MODEL
+from src.web_logging import get_logger, log_failure
 
 DATA_ROOT = PROJECT_ROOT / "data" / "input"
 OUTPUT_ROOT = PROJECT_ROOT / "data" / "output" / "web_agent_runs"
 WEB_ROOT = Path(__file__).resolve().parent / "web"
 MAX_DATASET_BYTES = 1024 * 1024 * 1024
+MAX_UPLOAD_BYTES = 128 * 1024 * 1024
 
 
 class AgentServer(ThreadingHTTPServer):
@@ -36,11 +41,18 @@ class AgentServer(ThreadingHTTPServer):
         self.jobs: dict[str, dict] = {}
         self.results: dict[str, dict] = {}
         self.connections = {}
+        self.answer_models = AnswerModels()
+        self.local_files = {}
+        self.upload_directory = tempfile.TemporaryDirectory(prefix='servo-web-')
+        self.upload_bytes = 0
+        get_logger().write_log('INFO', 'web.server', f'SERVER_START | port={self.server_address[1]}')
 
     def datasets(self):
         DATA_ROOT.mkdir(parents=True, exist_ok=True)
         items = []
-        for path in DATA_ROOT.rglob("*.csv"):
+        for path in DATA_ROOT.rglob('*'):
+            if path.suffix.lower() not in ('.csv', '.xlsx') or path.name == 'param_name_and_type.xlsx':
+                continue
             if not path.is_file() or "web_uploads" in path.parts:
                 continue
             try:
@@ -57,11 +69,31 @@ class AgentServer(ThreadingHTTPServer):
         if dataset_id not in available:
             raise ValueError("数据集不在 data/input 允许目录中。")
         path = (DATA_ROOT / dataset_id).resolve()
-        if not path.is_relative_to(DATA_ROOT.resolve()) or path.suffix.lower() != ".csv":
+        if not path.is_relative_to(DATA_ROOT.resolve()) or path.suffix.lower() not in (".csv", ".xlsx"):
             raise ValueError("数据集路径无效。")
         if path.stat().st_size > MAX_DATASET_BYTES:
             raise ValueError("当前版本单个 CSV 上限为 1 GiB。")
         return path
+
+    def server_close(self):
+        self.answer_models.close()
+        super().server_close()
+        if hasattr(self, 'upload_directory'):
+            self.upload_directory.cleanup()
+            get_logger().write_log('INFO', 'web.server', f'SERVER_STOP | port={self.server_address[1]}')
+
+    def register_local(self, path):
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError('请选择文件或输入绝对路径。')
+        selected = validate_file(path.strip().strip('"'))
+        details = inspect_file(selected)
+        with self.lock:
+            if len(self.local_files) >= 40:
+                raise ValueError('本次会话最多选择 40 个文件，请重启服务后重新选择。')
+            fid = secrets.token_urlsafe(24)
+            self.local_files[fid] = selected
+        get_logger().write_log('INFO', 'web.files', f"FILE_SELECTED | name={details['name']!r} | bytes={details['bytes']}")
+        return {'file_id': fid, **details}
 
     def _new_job(self, label, stage):
         with self.lock:
@@ -71,6 +103,7 @@ class AgentServer(ThreadingHTTPServer):
                 self.jobs.pop(next(iter(self.jobs)))
             jid = 'j_' + uuid.uuid4().hex
             self.jobs[jid] = {'id': jid, 'status': 'queued', 'dataset': label, 'stage': stage}
+            get_logger().write_log('INFO', 'web.jobs', f'JOB_QUEUED | job={jid} | source={label!r}')
             return jid
 
     def start_connection(self, body):
@@ -83,7 +116,9 @@ class AgentServer(ThreadingHTTPServer):
         try:
             with self.lock:
                 self.jobs[jid]['status'] = 'running'
+            get_logger().write_log('INFO', 'web.clickhouse', f'CONNECT_START | table={connection.database}.{connection.table}')
             columns = connection.check()
+            get_logger().write_log('INFO', 'web.clickhouse', f'CONNECT_SUCCESS | fields={len(columns)}')
             cid = secrets.token_urlsafe(24)
             with self.lock:
                 self.connections = {key: value for key, value in self.connections.items() if value['expires'] > time.monotonic()}
@@ -92,6 +127,7 @@ class AgentServer(ThreadingHTTPServer):
                 self.connections[cid] = {'connection': connection, 'columns': columns, 'expires': time.monotonic()+3600}
                 self.jobs[jid].update(status='succeeded', result={'connection_id': cid, 'columns': columns})
         except Exception as error:
+            log_failure('web.clickhouse', error, f'CONNECT_FAILED | job={jid}', secrets=(connection.username, connection.password))
             with self.lock:
                 self.jobs[jid].update(status='failed', error=str(error)[:500])
 
@@ -118,33 +154,89 @@ class AgentServer(ThreadingHTTPServer):
                                    dictionary if dictionary.exists() else None, source=source)
             self._publish(jid, result)
         except Exception as error:
+            connection = selected['connection']
+            log_failure('web.clickhouse', error, f'ANALYSIS_FAILED | job={jid}', secrets=(connection.username, connection.password))
             with self.lock:
                 self.jobs[jid].update(status='failed', stage='分析失败', error=str(error)[:500])
 
     def _publish(self, jid, result):
         save_result(result, OUTPUT_ROOT)
+        get_logger().write_log('INFO', 'web.analysis', f"ANALYSIS_COMPLETE | job={jid} | run={result['run_id']} | rows={result['descriptive']['top_level']['rows']}")
         with self.lock:
             self.results[result['run_id']] = result
             self.jobs[jid].update(status='succeeded', stage='分析完成', result=result)
             while len(self.results) > 5:
                 self.results.pop(next(iter(self.results)))
 
-    def start_analysis(self, dataset_id: str):
-        path = self.resolve_dataset(dataset_id)
-        jid = self._new_job(path.name, '等待读取 CSV')
-        self.executor.submit(self._analyze, jid, path)
-        return {"job_id": jid, "status": "queued"}
-
-    def _analyze(self, jid: str, path: Path):
-        with self.lock:
-            self.jobs[jid].update(status="running", stage="读取并校验数据")
-        try:
-            dictionary = DATA_ROOT / "param_name_and_type.xlsx"
-            result = analyze_dataset(path, dictionary if dictionary.exists() else None)
-            self._publish(jid, result)
-        except Exception as error:  # noqa: BLE001 - job failure is returned to the local UI
+    def start_analysis(self, dataset_id=None, local_file_id=None, sheet=None):
+        if local_file_id is not None:
             with self.lock:
-                self.jobs[jid].update(status="failed", stage="分析失败", error=str(error)[:500])
+                path = self.local_files.get(local_file_id)
+            if path is None:
+                raise ValueError('本地文件选择已失效，请重新选择。')
+            path = validate_file(path)
+        else:
+            path = self.resolve_dataset(dataset_id)
+        if sheet is not None and not isinstance(sheet, str):
+            raise ValueError('工作表名称无效。')
+        jid = self._new_job(path.name, '等待读取本地数据')
+        self.executor.submit(self._analyze, jid, path, sheet)
+        return {'job_id': jid, 'status': 'queued'}
+
+    def _analyze(self, jid, path, sheet=None):
+        with self.lock:
+            self.jobs[jid].update(status='running', stage='读取并校验数据')
+        try:
+            get_logger().write_log('INFO', 'web.files', f'READ_START | job={jid} | name={path.name!r} | sheet={sheet!r}')
+            dictionary = DATA_ROOT / 'param_name_and_type.xlsx'
+            result = analyze_dataset(path, dictionary if dictionary.exists() else None, sheet)
+            self._publish(jid, result)
+        except Exception as error:
+            log_failure('web.analysis', error, f'ANALYSIS_FAILED | job={jid}')
+            with self.lock:
+                self.jobs[jid].update(status='failed', stage='分析失败', error=str(error)[:500])
+
+    def start_model_connection(self):
+        jid = self._new_job('Codex', '正在读取本机 Codex 模型列表')
+        self.executor.submit(self._connect_models, jid)
+        return {'job_id':jid}
+
+    def _connect_models(self, jid):
+        try:
+            with self.lock:
+                self.jobs[jid]['status'] = 'running'
+            result = self.answer_models.connect()
+            with self.lock:
+                self.jobs[jid].update(status='succeeded', result=result)
+        except Exception as error:
+            log_failure('web.models', error, f'CONNECT_FAILED | job={jid}')
+            with self.lock:
+                self.jobs[jid].update(status='failed',error=str(error)[:500])
+
+    def start_model_answer(self, run_id, question, settings, consent):
+        self.answer_models.validate(settings)
+        if consent is not True:
+            raise ValueError('请先确认将问题和分析摘要发送至所选模型。')
+        with self.lock:
+            result = self.results.get(run_id)
+        if result is None:
+            raise ValueError('分析结果已过期，请重新分析。')
+        jid = self._new_job('模型问答','所选模型正在回答')
+        self.executor.submit(self._answer_model,jid,result,question,settings,consent)
+        return {'job_id':jid}
+
+    def _answer_model(self,jid,result,question,settings,consent):
+        try:
+            with self.lock:
+                self.jobs[jid]['status'] = 'running'
+            answer = self.answer_models.answer(result,question,settings,consent)
+            get_logger().write_log('INFO','web.models',f"ANSWER_COMPLETE | job={jid} | model={settings['model']}")
+            with self.lock:
+                self.jobs[jid].update(status='succeeded',result=answer)
+        except Exception as error:
+            log_failure('web.models',error,f'ANSWER_FAILED | job={jid}')
+            with self.lock:
+                self.jobs[jid].update(status='failed',error=str(error)[:500])
 
     def ask(self, run_id: str, question: str):
         with self.lock:
@@ -216,6 +308,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._static(unquote(url.path.removeprefix("/web/")))
         if not self._auth_ok():
             return self._send(403, {"error": "网页会话已失效，请刷新。"})
+        if url.path == '/api/models':
+            return self._send(200,self.server.answer_models.catalog())
         if url.path == "/api/datasets":
             return self._send(200, {"datasets": self.server.datasets()})
         if url.path.startswith("/api/jobs/"):
@@ -234,29 +328,83 @@ class Handler(BaseHTTPRequestHandler):
             mime += "; charset=utf-8"
         return self._send(200, path.read_bytes(), mime)
 
+    def _upload(self):
+        size = int(self.headers.get('Content-Length', '0'))
+        if not 0 < size <= MAX_UPLOAD_BYTES:
+            raise ValueError('浏览器选择文件上限为 128 MiB；更大 CSV 请使用绝对路径。')
+        name = parse_qs(urlsplit(self.path).query).get('filename', [''])[0]
+        name = name.replace('\\', '/').rsplit('/', 1)[-1]
+        if not name or Path(name).suffix.lower() not in ('.csv', '.xlsx') or len(name) > 240:
+            raise ValueError('请选择 CSV 或 XLSX 文件。')
+        with self.server.lock:
+            if self.server.upload_bytes + size > 512 * 1024 * 1024:
+                raise ValueError('本次会话文件累计超过 512 MiB，请重启后重新选择，或使用绝对路径。')
+            self.server.upload_bytes += size
+        folder = Path(self.server.upload_directory.name) / uuid.uuid4().hex
+        folder.mkdir()
+        path = folder / name
+        previous_timeout = self.connection.gettimeout()
+        try:
+            self.connection.settimeout(30)
+            remaining = size
+            with path.open('wb') as stream:
+                while remaining:
+                    chunk = self.rfile.read(min(1024*1024, remaining))
+                    if not chunk:
+                        raise ValueError('文件传输未完成，请重新选择。')
+                    stream.write(chunk)
+                    remaining -= len(chunk)
+            result = self.server.register_local(str(path))
+            return self._send(200, result)
+        except Exception:
+            with self.server.lock:
+                self.server.upload_bytes -= size
+            path.unlink(missing_ok=True)
+            raise
+        finally:
+            self.connection.settimeout(previous_timeout)
+
     def do_POST(self):
         if not self._host_ok() or not self._origin_ok():
             return self._send(403, {"error": "请从本机 Agent 页面操作。"})
         if not self._auth_ok():
             return self._send(403, {"error": "网页会话已失效，请刷新。"})
         try:
-            body = self._body()
             url = urlsplit(self.path)
+            if url.path == '/api/local/upload':
+                return self._upload()
+            body = self._body()
+            if url.path == '/api/local/project':
+                return self._send(200, self.server.register_local(str(self.server.resolve_dataset(body.get('dataset')))))
+            if url.path == '/api/local/register':
+                return self._send(200, self.server.register_local(body.get('path')))
+            if url.path == '/api/models/connect':
+                return self._send(202,self.server.start_model_connection())
             if url.path == '/api/clickhouse/connect':
                 return self._send(202, self.server.start_connection(body))
             if url.path == '/api/clickhouse/analyze':
                 return self._send(202, self.server.start_clickhouse_analysis(body))
             if url.path == "/api/analyze":
-                dataset = body.get("dataset")
-                if not isinstance(dataset, str) or set(body) != {"dataset"}:
-                    raise ValueError("请选择一个有效 CSV 数据集。")
-                return self._send(202, self.server.start_analysis(dataset))
+                keys = set(body)
+                if keys not in ({'dataset'}, {'dataset', 'sheet'}, {'local_file_id'}, {'local_file_id', 'sheet'}):
+                    raise ValueError('请选择一个有效的本地数据文件。')
+                source = body.get('local_file_id', body.get('dataset'))
+                if not isinstance(source, str):
+                    raise ValueError('本地文件标识无效。')
+                return self._send(202, self.server.start_analysis(body.get('dataset'), body.get('local_file_id'), body.get('sheet')))
             if url.path == "/api/ask":
                 run_id, question = body.get("run_id"), body.get("question")
                 if not isinstance(run_id, str) or not isinstance(question, str) or not question.strip() or len(question) > 1000:
                     raise ValueError("请提供分析结果 ID 和不超过 1000 字的问题。")
-                return self._send(200, self.server.ask(run_id, question))
+                settings = body.get('settings', {'model':LOCAL_MODEL['id']})
+                settings = self.server.answer_models.validate(settings)
+                if settings['model'] != LOCAL_MODEL['id']:
+                    return self._send(202,self.server.start_model_answer(run_id,question,settings,body.get('consent')))
+                answer = self.server.ask(run_id, question)
+                answer['settings'] = settings
+                return self._send(200, answer)
         except Exception as error:  # noqa: BLE001 - bounded local API error
+            log_failure('web.api', error, f'REQUEST_FAILED | route={urlsplit(self.path).path}')
             return self._send(400, {"error": str(error)[:500]})
         return self._send(404, {"error": "接口不存在。"})
 
@@ -284,9 +432,11 @@ def main(argv=None):
     except KeyboardInterrupt:
         pass
     finally:
-        server.executor.shutdown(wait=False, cancel_futures=True)
+        server.answer_models.close()
+        server.executor.shutdown(wait=True, cancel_futures=True)
         server.server_close()
 
 
 if __name__ == "__main__":
-    main()
+    with get_logger().run(__file__):
+        main()

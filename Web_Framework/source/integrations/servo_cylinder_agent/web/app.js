@@ -1,3 +1,4 @@
+import {renderEquipmentViews,activateEquipmentTab} from "./equipment.js";
 import {setupChatControls} from "./chat-controls.js";
 import {setupVoice} from "./voice-input.js";
 import { setupSources } from "./source.js";
@@ -107,7 +108,7 @@ function renderCharts(charts) {
 }
 
 function renderOverview(data) {
-  renderKpis(data); renderCharts(data.descriptive.charts);
+  renderKpis(data);
   $("#data-line").textContent = `数据源 · ${data.dataset}`;
   $("#window-label").textContent = `${dateFmt(data.descriptive.top_level.first_timestamp)} — ${dateFmt(data.descriptive.top_level.last_timestamp)}`;
   const rows = data.descriptive.assets;
@@ -146,7 +147,7 @@ function renderPredictive(data) {
 
 function render(data) {
   state.run = data; $("#empty").hidden = true; $("#results").hidden = false;
-  renderOverview(data); renderDiagnostics(data); renderLifecycle(data); renderPredictive(data);
+  renderOverview(data); renderDiagnostics(data); renderPredictive(data); renderEquipmentViews(data,api);
   $("#footer-state").textContent = `本地运行 ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`;
   $("#answer").hidden = true;
   $("#answer-engine").hidden = true;
@@ -184,6 +185,7 @@ async function analyze() {
 function activateTab(name) {
   document.querySelectorAll(".tab").forEach((button) => button.classList.toggle("active", button.dataset.tab === name));
   document.querySelectorAll(".panel").forEach((panel) => { const active = panel.id === `panel-${name}`; panel.hidden = !active; panel.classList.toggle("active", active); });
+  activateEquipmentTab();
 
 }
 

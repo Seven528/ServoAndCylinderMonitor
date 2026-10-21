@@ -256,6 +256,14 @@ class AgentServer(ThreadingHTTPServer):
         if result is None:
             raise ValueError("分析结果已过期，请重新运行分析。")
         text = question.strip().lower()
+        if result.get('equipment') and any(word in text for word in ('degradation','退化','hmm','生命周期','阶段','危险区域','isolation','周期')):
+            rows=[]
+            for family in ('servo','cylinder'):
+                for asset in result['equipment'][family]['assets']:
+                    rows.append({'设备类型':'伺服' if family=='servo' else '气缸','资产':asset['asset'],'完整周期':asset['complete_cycles'],
+                        'IsolationForest':asset['isolation_forest'],'degradation':asset['degradation'],'HMM':asset['hmm']})
+            return {'topic':'equipment','answer':'以下为本次完整数据窗按设备计算的周期模型。mean degradation 是相对同工况早期参考的指数；HMM 阶段 0/1/2 是相对波形状态，缺少良品/次品标签时不能确认次品风险。','evidence':rows}
+
         if any(word in text for word in ("剩余寿命", "寿命", "rul", "预测", "还能用")):
             p = result["predictive"]
             return {"topic": "predictive", "answer": p["message"], "evidence": p["reasons"], "models": p["candidate_models"]}
@@ -384,6 +392,18 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == '/api/local/upload':
                 return self._upload()
             body = self._body()
+            if url.path.startswith('/api/equipment/'):
+                from .equipment_analysis import query_view,open_evidence,catalog
+                run_id=url.path.rsplit('/',1)[-1]
+                with self.server.lock:known=run_id in self.server.results
+                if not known:raise ValueError('本次分析已失效，请重新运行。')
+                if body.get('action')=='assets':
+                    family=body.get('family','servo')
+                    if family not in ('servo','cylinder'):raise ValueError('设备类型无效。')
+                    with open_evidence(run_id) as db:payload=catalog(db,family,body.get('query',''))
+                else:payload=query_view(run_id,body)
+                return self._send(200,payload)
+
             if url.path == '/api/local/project':
                 return self._send(200, self.server.register_local(str(self.server.resolve_dataset(body.get('dataset')))))
             if url.path == '/api/local/register':

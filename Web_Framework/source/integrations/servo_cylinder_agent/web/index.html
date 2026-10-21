@@ -86,21 +86,20 @@
         </nav>
         <section id="panel-overview" class="panel active">
           <div id="kpis" class="kpi-grid"></div>
-          <div class="section-title"><div><h3>信号随时间变化</h3><p>时间桶覆盖完整数据范围；汇总每个桶内全部记录的中位数与最大值。</p></div></div>
-          <div id="charts" class="chart-grid"></div>
-          <div class="section-title"><div><h3>资产描述统计</h3><p>按资产/站点分组，统计覆盖全部记录；界面预览前 100 个资产。</p></div></div>
-          <div class="table-wrap"><table id="asset-table"></table></div>
+          <div class="section-title"><div><h3>信号随时间变化</h3><p>按设备独立查看周期、均值、分位数与波动；放大后重新读取局部明细。</p></div></div>
+          <div id="overview-devices"></div>
+          <details class="details"><summary>全局资产描述统计（兼容原有汇总）</summary><div class="section-title"><div><h3>资产描述统计</h3><p>按资产/站点分组，统计覆盖全部记录；界面预览前 100 个资产。</p></div></div>
+          <div class="table-wrap"><table id="asset-table"></table></div></details>
           <details class="details"><summary>数据质量与字段</summary><div id="quality" class="quality-grid"></div><div id="dictionary" class="dictionary"></div></details>
         </section>
         <section id="panel-diagnostics" class="panel" hidden>
-          <div class="section-title"><div><h3>异常检测</h3><p>稳健离群筛查和驱动状态规则。异常用于提示复核，不直接下故障结论。</p></div></div>
-          <div id="flags" class="flag-grid"></div><div id="diag-notes" class="callout"></div>
+          <div class="section-title"><div><h3>异常检测</h3><p>周期级 IsolationForest、多变量波形特征和退化指标；原有逐行筛查保留在下方明细。</p></div></div>
+          <div id="diagnostic-devices"></div><details class="details"><summary>全量异常快照汇总（原有逐行筛查）</summary><div id="flags" class="flag-grid"></div><div id="diag-notes" class="callout"></div>
           <div class="section-title"><div><h3>异常快照</h3><p>连续快照逐行记录；同一问题持续多行时不等同于多次独立故障。</p></div></div>
-          <div class="table-wrap"><table id="events-table"></table></div>
+          <div class="table-wrap"><table id="events-table"></table></div></details>
         </section>
         <section id="panel-lifecycle" class="panel" hidden>
-          <div class="section-title"><div><h3>生命周期状态筛查</h3><p>状态卡展示本数据窗内的统计信号和状态筛查分（0–100），不代表可靠性概率或安全评级。</p></div></div>
-          <div id="health-cards" class="health-grid"></div><div id="health-method" class="callout"></div>
+          <div id="lifecycle-devices"></div>
         </section>
         <section id="panel-predictive" class="panel" hidden>
           <div id="rul-status" class="rul-card"></div>

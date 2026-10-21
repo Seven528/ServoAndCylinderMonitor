@@ -17,7 +17,7 @@ SIGNALS=[('ACTTORQUE','SERVO_TORQUE_OUTLIER','伺服实际转矩'),
          ('ACTTIME_MS','SERVO_ACTTIME_OUTLIER','伺服动作时间'),
          ('MOVETOTBASTIME_MS','CYLINDER_TO_BASE_TIME_OUTLIER','气缸回程时间'),
          ('MOVETOWORKTIME_MS','CYLINDER_TO_WORK_TIME_OUTLIER','气缸工作行程时间')]
-METRICS=['ACTTORQUE','ACTVEL','POSITION_ERROR','ACTTIME_MS','MOVETOTBASTIME_MS','MOVETOWORKTIME_MS','MOVEMENTCOUNTER']
+METRICS=['ACTTORQUE','ACTVEL','POSITION_ERROR','ACTTIME_MS','MOVETOTBASTIME_MS','MOVETOWORKTIME_MS','MOVEMENTCOUNTER','ACTPOS','SPEED','ACC','DEC']
 STATE_FLAGS=['CLASS1DIAG_ASSERTED','CLASS2DIAG_ASSERTED','CLASS3DIAG_ASSERTED','DRIVE_ENABLED_NOT_READY_FOR_MOVEMENT','AXIS_NOT_REFERENCED']
 
 
@@ -50,7 +50,7 @@ class DiskAnalysis:
         self.db.execute('PRAGMA journal_mode=OFF')
         self.db.execute('PRAGMA synchronous=OFF')
         if cancel is not None:self.db.set_progress_handler(lambda:int(cancel.is_set()),10000)
-        self.db.execute('CREATE TABLE samples(id INTEGER PRIMARY KEY,asset TEXT,context TEXT,speed TEXT,ts REAL,moving INTEGER,row_hash TEXT,asset_id TEXT,event INTEGER,diagno TEXT,flags TEXT,screened INTEGER,'+','.join(f'{col} REAL' for col in METRICS)+')')
+        self.db.execute('CREATE TABLE samples(id INTEGER PRIMARY KEY,asset TEXT,context TEXT,context_speed TEXT,ts REAL,moving INTEGER,row_hash TEXT,asset_id TEXT,event INTEGER,diagno TEXT,flags TEXT,screened INTEGER,execute INTEGER,accelerating INTEGER,decelerating INTEGER,standstill INTEGER,'+','.join(f'{col} REAL' for col in METRICS)+')')
         self.progress=progress or (lambda _:None)
         self.columns=None;self.available=set();self.missing=Counter();self.rows=0;self.pred_columns={}
 
@@ -73,7 +73,7 @@ class DiskAnalysis:
         for col in LTIME_COLUMNS:
             if col in frame:
                 frame[col+'_MS']=frame[col].map(lambda value:_duration(tuple(value) if isinstance(value,(list,bytearray)) else value))
-        for col in ['ACTPOS','ACTVEL','ACTTORQUE','SPEED','TARGETPOS','MOVEMENTCOUNTER']:
+        for col in ['ACTPOS','ACTVEL','ACTTORQUE','SPEED','ACC','DEC','TARGETPOS','MOVEMENTCOUNTER']:
             if col in frame:frame[col]=pd.to_numeric(frame[col],errors='coerce')
         if {'TARGETPOS','ACTPOS'}.issubset(frame):frame['POSITION_ERROR']=frame['TARGETPOS']-frame['ACTPOS']
         self.available.update(col for col in METRICS if col in frame)
@@ -109,8 +109,11 @@ class DiskAnalysis:
         metrics=[tuple(_finite(value) for value in row) for row in frame.reindex(columns=METRICS).itertuples(index=False,name=None)]
         moving_values=moving.astype(int).tolist()
         diag=raw['DIAGNO'].astype(str).tolist() if 'DIAGNO' in raw else [None]*len(frame)
-        records=[(assets[i],contexts[i],speeds[i],_finite(timestamps[i]),moving_values[i],hashes[i],str(ids[i]) if ids[i] is not None else None,int(events[i]),diag[i],';'.join(flags[i]),int(any(not flag.startswith('CLASS') for flag in flags[i])),*metrics[i]) for i in range(len(frame))]
-        self.db.executemany('INSERT INTO samples(asset,context,speed,ts,moving,row_hash,asset_id,event,diagno,flags,screened,'+','.join(METRICS)+') VALUES('+','.join('?' for _ in records[0])+')',records)
+        states=[]
+        for col in ['EXEUTE' if 'EXEUTE' in raw else 'EXECUTE','ACCELERATING','DECELERATING','STANDSTILL']:
+            states.append([int(str(v).lower() in ['true','1','1.0','yes']) if pd.notna(v) else None for v in raw[col]] if col in raw else [None]*len(raw))
+        records=[(assets[i],contexts[i],speeds[i],_finite(timestamps[i]),moving_values[i],hashes[i],str(ids[i]) if ids[i] is not None else None,int(events[i]),diag[i],';'.join(flags[i]),int(any(not flag.startswith('CLASS') for flag in flags[i])),*(values[i] for values in states),*metrics[i]) for i in range(len(frame))]
+        self.db.executemany('INSERT INTO samples(asset,context,context_speed,ts,moving,row_hash,asset_id,event,diagno,flags,screened,execute,accelerating,decelerating,standstill,'+','.join(METRICS)+') VALUES('+','.join('?' for _ in records[0])+')',records)
         self.db.commit();self.rows+=len(frame)
         self.progress(f'已读取 {self.rows:,} 条，全部写入磁盘统计，不截断数据')
 
@@ -124,8 +127,8 @@ class DiskAnalysis:
 
     def prepare(self):
         self.progress(f'已读取全部 {self.rows:,} 条，正在建立全量统计索引')
-        speeds=self.db.execute('SELECT COUNT(*) FROM (SELECT DISTINCT speed FROM samples WHERE speed IS NOT NULL LIMIT 13)').fetchone()[0]
-        if 'SPEED' in self.columns and speeds<=12:self.db.execute("UPDATE samples SET context=context||' / speed='||COALESCE(speed,'nan')")
+        speeds=self.db.execute('SELECT COUNT(*) FROM (SELECT DISTINCT context_speed FROM samples WHERE context_speed IS NOT NULL LIMIT 13)').fetchone()[0]
+        if 'SPEED' in self.columns and speeds<=12:self.db.execute("UPDATE samples SET context=context||' / speed='||COALESCE(context_speed,'nan')")
         self.db.execute('CREATE INDEX sample_asset_phase ON samples(asset,context,moving)')
         self.db.execute('CREATE INDEX sample_time ON samples(ts)')
         self.db.execute('CREATE INDEX sample_hash ON samples(row_hash)')

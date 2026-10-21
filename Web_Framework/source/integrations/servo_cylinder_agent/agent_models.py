@@ -19,6 +19,15 @@ def summary_for_model(result):
                             for asset in result['lifecycle']['assets'][:10]]
     summary['lifecycle_notes'] = result['lifecycle']['notes']
     summary['predictive'] = {key:result['predictive'].get(key) for key in ('status','message','reasons','candidate_models')}
+    if result.get('equipment'):
+        summary['cycle_models']=[]
+        for family in ('servo','cylinder'):
+            for asset in result['equipment'][family]['assets'][:5]:
+                summary['cycle_models'].append({'family':family,'complete_cycles':asset['complete_cycles'],
+                    'IF_features':asset['isolation_forest'].get('features'),'IF_anomaly_cycles':asset['isolation_forest'].get('anomalies'),
+                    'mean_degradation':asset['degradation'].get('mean_degradation'),'degradation_eligible_cycles':asset['degradation'].get('eligible_cycles'),
+                    'HMM_status':asset['hmm']['status'],'HMM_features':asset['hmm'].get('features')})
+        summary['cycle_model_boundary']='周期模型按资产独立计算；部分数据缺失时不可计算。HMM 0/1/2 为相对波形状态，次品概率与真实生命周期未验证。mean degradation 是相对早期同工况参考的正增幅映射，非磨损百分比。'
     encoded = json.dumps(summary,ensure_ascii=False)
     if len(encoded) > 20000:
         raise ValueError('分析摘要超过模型输入限制。')

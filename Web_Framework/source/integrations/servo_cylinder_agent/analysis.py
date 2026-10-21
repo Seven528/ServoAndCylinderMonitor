@@ -195,6 +195,10 @@ def analyze_stream(stream,dataset_name,dictionary_path=None,source_bytes=None,so
         engine.prepare()
         if cancel is not None and cancel.is_set():raise ValueError('分析已取消，未返回部分结果。')
         result=engine.result(dataset_name,dictionary_path,source or {},source_bytes)
+        from .equipment_analysis import prepare_equipment,persist
+        result['equipment']=prepare_equipment(engine)
+        engine.progress('正在保存可缩放的本机波形明细')
+        persist(engine,result)
         get_logger().write_log('INFO','web.analysis',f'FULL_ANALYSIS_COMPLETE | rows={engine.rows} | disk_statistics=True')
         return result
     finally:

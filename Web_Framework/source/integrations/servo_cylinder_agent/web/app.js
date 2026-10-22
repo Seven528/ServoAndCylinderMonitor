@@ -164,7 +164,9 @@ async function pollJob(jobId, progress = notice) {
     if (job.status === 'succeeded') return job.result;
     if (job.status === 'failed') throw new Error(job.error || '任务失败');
     if (job.error) throw new Error(job.error);
-    progress(job.stage || '任务排队中…');
+    const elapsed=Math.floor(job.elapsed_seconds||0);
+    progress(`${job.stage || '任务排队中…'} · 已运行 ${Math.floor(elapsed/60)} 分 ${elapsed%60} 秒`);
+    if(state.dataJob===jobId)$("#footer-state").textContent=`正在处理 · ${Math.floor(elapsed/60)}:${String(elapsed%60).padStart(2,'0')}`;
   }
 }
 
@@ -177,7 +179,7 @@ async function analyze() {
     state.dataJob=job_id; $("#cancel-data-job").hidden=false;
     const result = await pollJob(job_id);
     render(result);
-    notice(`全量分析完成：${fmt(result.descriptive.top_level.rows,0)} 条记录全部参与统计。异常为筛查结果，请结合设备定义复核。`,'success');
+    notice(`全量分析完成：${fmt(result.descriptive.top_level.rows,0)} 条记录全部参与统计${result.processing?.timings?`，耗时 ${fmt(result.processing.timings.total_seconds,1)} 秒`:''}。异常为筛查结果，请结合设备定义复核。`,'success');
   } catch (error) { notice(error.message,'error'); $("#footer-state").textContent = "分析未完成"; }
   finally { sources.setBusy(false); state.dataJob=null; $("#cancel-data-job").hidden=true; }
 }

@@ -20,24 +20,31 @@ def prepare_equipment(engine):
     except ImportError:
         raise ValueError('周期模型需要 scikit-learn 和 scipy，请在运行网页的 Python 解释器中安装本集成的 requirements.txt。') from None
     db=engine.db;progress=engine.progress
-    db.execute('CREATE TABLE wave_rows(family TEXT,sample_id INTEGER,cid INTEGER,acceleration REAL,PRIMARY KEY(family,sample_id))')
+    db.execute('CREATE TABLE wave_assets(asset TEXT PRIMARY KEY,asset_num INTEGER UNIQUE)')
+    db.execute('INSERT INTO wave_assets SELECT asset,ROW_NUMBER() OVER(ORDER BY asset) FROM (SELECT DISTINCT asset FROM samples WHERE ts IS NOT NULL)')
+    db.execute('CREATE TABLE wave_rows(family TEXT,asset INTEGER,sample_id INTEGER,cid INTEGER,acceleration REAL,PRIMARY KEY(family,sample_id))')
     db.execute('CREATE TABLE cycles(family TEXT,asset TEXT,cid INTEGER,start REAL,end REAL,n INTEGER,complete INTEGER,boundary TEXT,'+','.join(field+' REAL' for field in CYCLE_FIELDS)+',if_score REAL,if_anomaly INTEGER,torque_di REAL,velocity_di REAL,mean_di REAL,stage INTEGER,PRIMARY KEY(family,asset,cid))')
     db.execute('CREATE TABLE equipment_models(family TEXT,asset TEXT,info TEXT,PRIMARY KEY(family,asset))')
-    db.execute('CREATE INDEX samples_asset_time ON samples(asset,ts,id)')
+    db.execute('CREATE INDEX IF NOT EXISTS samples_asset_time ON samples(asset,ts,id)')
     for family,fields in [('servo',SERVO),('cylinder',CYLINDER)]:
         present=[field for field in fields if field in engine.available]
         if not present:continue
         condition=' OR '.join(field+' IS NOT NULL' for field in present)
         for (asset,) in db.execute('SELECT DISTINCT asset FROM samples WHERE ts IS NOT NULL AND ('+condition+')'):
             progress(f'正在识别 {family} 周期：{asset}')
-            # Median time interval per asset, using disk sorting, not an in-memory trace.
-            q='SELECT ts-LAG(ts) OVER(ORDER BY ts,id) dt FROM samples WHERE asset=? AND ts IS NOT NULL'
-            n=db.execute('SELECT COUNT(*) FROM ('+q+') WHERE dt>0',(asset,)).fetchone()[0]
-            interval=db.execute('SELECT dt FROM ('+q+') WHERE dt>0 ORDER BY dt LIMIT 1 OFFSET ?',(asset,n//2)).fetchone() if n else None
-            gap_limit=max(30,10*(interval[0] if interval else 1))
-            execute_n=db.execute('SELECT COUNT(DISTINCT execute) FROM samples WHERE asset=?',(asset,)).fetchone()[0]
-            still_n=db.execute('SELECT COUNT(DISTINCT standstill) FROM samples WHERE asset=?',(asset,)).fetchone()[0]
-            vmax=engine.quantile('ABS(ACTVEL)','asset=?',(asset,),q=.95) if 'ACTVEL' in engine.available else None
+            asset_num=db.execute('SELECT asset_num FROM wave_assets WHERE asset=?',(asset,)).fetchone()[0]
+            db.execute('CREATE TEMP TABLE IF NOT EXISTS equipment_parameters(asset TEXT PRIMARY KEY,gap_limit REAL,execute_n INTEGER,still_n INTEGER,vmax REAL)')
+            cached=db.execute('SELECT gap_limit,execute_n,still_n,vmax FROM equipment_parameters WHERE asset=?',(asset,)).fetchone()
+            if cached is None:
+                engine.ensure_intervals()
+                n=db.execute('SELECT COUNT(*) FROM sample_intervals WHERE asset=? AND value>0',(asset,)).fetchone()[0]
+                interval=db.execute('SELECT value FROM sample_intervals WHERE asset=? AND value>0 ORDER BY value LIMIT 1 OFFSET ?',(asset,n//2)).fetchone() if n else None
+                gap_limit=max(30,10*(interval[0] if interval else 1))
+                execute_n,still_n=db.execute('SELECT COUNT(DISTINCT execute),COUNT(DISTINCT standstill) FROM samples WHERE asset=?',(asset,)).fetchone()
+                vmax=engine.quantile('ABS(ACTVEL)','asset=?',(asset,),q=.95) if 'ACTVEL' in engine.available else None
+                cached=(gap_limit,execute_n,still_n,vmax)
+                db.execute('INSERT INTO equipment_parameters VALUES(?,?,?,?,?)',(asset,*cached))
+            gap_limit,execute_n,still_n,vmax=cached
             threshold=max(1e-8,(vmax or 0)*.02)
             boundary='EXEUTE/EXECUTE 上升沿' if execute_n==2 else 'STANDSTILL 下降沿' if still_n==2 else '|ACTVEL| 运动阈值上升沿' if vmax and vmax>0 else '未识别周期'
             if family=='cylinder':
@@ -57,41 +64,19 @@ def prepare_equipment(engine):
                     cid+=1;length=0;start=None;seen_start=rise and not reset and not counter_reset
                 if start is None:start=ts
                 acceleration=(abs(vel)-abs(previous[2]))/(ts-previous[0]) if previous and vel is not None and previous[2] is not None and ts>previous[0] and not reset and not rise else None
-                buffer.append((family,rid,cid,acceleration));length+=1;last=ts
+                buffer.append((family,asset_num,rid,cid,acceleration));length+=1;last=ts
                 if len(buffer)>=10000:
-                    db.executemany('INSERT INTO wave_rows VALUES(?,?,?,?)',buffer);buffer=[];progress(f'周期读取：{asset} · 已识别 {cid:,} 个边界')
+                    db.executemany('INSERT INTO wave_rows VALUES(?,?,?,?,?)',buffer);buffer=[];progress(f'周期读取：{asset} · 已识别 {cid:,} 个边界')
                 previous=(ts,active,vel,counter)
-            db.executemany('INSERT INTO wave_rows VALUES(?,?,?,?)',buffer)
+            db.executemany('INSERT INTO wave_rows VALUES(?,?,?,?,?)',buffer)
             if start is not None:db.execute('INSERT INTO cycles(family,asset,cid,start,end,n,complete,boundary,duration) VALUES(?,?,?,?,?,?,?,?,?)',(family,asset,cid,start,last,length,0,boundary,last-start))
             db.commit()
-    db.execute('CREATE INDEX wave_cycle ON wave_rows(family,cid,sample_id)')
+    db.execute('CREATE INDEX wave_cycle ON wave_rows(family,asset,cid,sample_id)')
     for family,asset in db.execute('SELECT family,asset FROM cycles GROUP BY family,asset'):
         progress(f'正在计算周期波形特征：{family} · {asset}')
-        vmax=engine.quantile('ABS(ACTVEL)','asset=?',(asset,),q=.95) if 'ACTVEL' in engine.available else 0
-        threshold=max(1e-8,(vmax or 0)*.02)
-        for feature_number,(cid,) in enumerate(db.execute('SELECT cid FROM cycles WHERE family=? AND asset=? ORDER BY cid',(family,asset))):
-            if feature_number%100==0:progress(f'波形特征：{asset} · {feature_number:,} 个周期')
-            params=(family,asset,cid)
-            where='asset=? AND id IN (SELECT sample_id FROM wave_rows WHERE family=? AND cid=?)'
-            wp=(asset,family,cid)
-            def avg(field):return db.execute('SELECT AVG('+field+') FROM samples WHERE '+where,wp).fetchone()[0]
-            values={}
-            if family=='servo':
-                motion=where+' AND ABS(ACTVEL)>?';mp=(*wp,threshold)
-                a=engine.quantile('ABS(ACTTORQUE)',motion,mp,q=.95);b=engine.quantile('ABS(ACTTORQUE)',motion,mp,q=.05)
-                values['torque_amplitude']=a-b if a is not None else None
-                stable=motion+' AND accelerating=0 AND decelerating=0'
-                groups=db.execute('SELECT COUNT(ACTVEL),AVG(ABS(ACTVEL)),AVG(ACTVEL*ACTVEL) FROM samples WHERE '+stable+' GROUP BY SPEED,CASE WHEN ACTVEL>=0 THEN 1 ELSE -1 END',mp).fetchall()
-                groups=[g for g in groups if g[0]>=3]
-                n=sum(g[0] for g in groups)
-                velocity_mean=sum(g[0]*g[1] for g in groups)/n if n else 0
-                values['velocity_instability']=math.sqrt(sum(g[0]*max(0,g[2]-g[1]**2) for g in groups)/n)/velocity_mean if velocity_mean>1e-8 else None
-                values['torque_mean']=avg('ABS(ACTTORQUE)');values['velocity_mean']=avg('ABS(ACTVEL)')
-                for field in ['speed','acc','dec']:values[field]=avg(field.upper())
-                for field,condition in [('acceleration_mean','w.acceleration>0'),('deceleration_mean','w.acceleration<0')]:
-                    values[field]=db.execute('SELECT AVG(ABS(w.acceleration)) FROM wave_rows w JOIN samples s ON s.id=w.sample_id WHERE w.family=? AND s.asset=? AND w.cid=? AND '+condition,params).fetchone()[0]
-            else:values.update(work_time=avg('MOVETOWORKTIME_MS'),base_time=avg('MOVETOTBASTIME_MS'))
-            db.execute('UPDATE cycles SET '+','.join(field+'=?' for field in values)+' WHERE family=? AND asset=? AND cid=?',(*values.values(),*params))
+        from .cycle_features import compute_features
+        vmax=db.execute('SELECT vmax FROM equipment_parameters WHERE asset=?',(asset,)).fetchone()[0]
+        compute_features(db,family,asset,max(1e-8,(vmax or 0)*.02),progress)
         info=model_cycles(db,family,asset,progress)
         info['boundary']=db.execute('SELECT boundary FROM cycles WHERE family=? AND asset=? LIMIT 1',(family,asset)).fetchone()[0]
         db.execute('INSERT INTO equipment_models VALUES(?,?,?)',(family,asset,json.dumps(info,ensure_ascii=False,allow_nan=False)))
@@ -118,10 +103,10 @@ def evidence_path(run_id):
 def persist(engine,result):
     path=evidence_path(result['run_id']);path.parent.mkdir(parents=True,exist_ok=True)
     engine.db.commit()
-    # Keep only this normalized local evidence for genuine detailed zoom queries.
-    target=sqlite3.connect(str(path))
-    try:engine.db.backup(target)
-    finally:target.close()
+    # The working database is on the same volume as the result directory.
+    # Closing and renaming preserves evidence without copying the entire DB.
+    engine.db.close();engine.db=None
+    Path(engine.database_path).replace(path)
     return path
 
 
@@ -150,20 +135,8 @@ def query_view(run_id,options):
         metrics=SERVO if family=='servo' else CYLINDER
         if options.get('view')=='diagnostic':metrics={}
         elif options.get('view')=='lifecycle':metrics={key:value for key,value in metrics.items() if key in ('ACTTORQUE','ACTVEL','MOVETOWORKTIME_MS','MOVETOTBASTIME_MS')}
-        charts=[]
-        for field,label in metrics.items():
-            sql=f'''WITH v AS (SELECT MIN(499,CAST((s.ts-?)/? AS INTEGER)) b,s.{field} v FROM samples s JOIN wave_rows w ON s.id=w.sample_id AND w.family=? WHERE s.asset=? AND s.ts>=? AND s.ts<=? AND s.{field} IS NOT NULL),
-                    r AS (SELECT b,v,ROW_NUMBER() OVER(PARTITION BY b ORDER BY v) rn,COUNT(*) OVER(PARTITION BY b) n FROM v)
-                    SELECT b,COUNT(*),MIN(v),MAX(v),AVG(v),AVG(v*v),'''
-            parts=[]
-            for q in [.05,.5,.95]:
-                pos=f'((n-1)*{q})';lo=f'MAX(CASE WHEN rn=CAST({pos} AS INTEGER)+1 THEN v END)';hi=f'MAX(CASE WHEN rn=CAST({pos} AS INTEGER)+2 THEN v END)'
-                parts.append(f'{lo}+(COALESCE({hi},{lo})-{lo})*({pos}-CAST({pos} AS INTEGER))')
-            rows=db.execute(sql+','.join(parts)+' FROM r GROUP BY b ORDER BY b',(start,width,family,asset,start,end)).fetchall()
-            if not rows:continue
-            points=[{'time':start+(row[0]+.5)*width,'count':row[1],'min':row[2],'max':row[3],'mean':row[4],'std':math.sqrt(max(0,row[5]-row[4]**2)),'p05':row[6],'median':row[7],'p95':row[8]} for row in rows]
-            stats=db.execute(f'SELECT COUNT({field}),MIN({field}),MAX({field}),AVG({field}) FROM samples s JOIN wave_rows w ON s.id=w.sample_id AND w.family=? WHERE asset=? AND ts>=? AND ts<=?',(family,asset,start,end)).fetchone()
-            charts.append({'key':field,'label':label,'points':points,'statistics':dict(zip(['count','min','max','mean'],stats))})
+        from .chart_queries import read_charts
+        charts=read_charts(db,family,asset,start,end,metrics,width)
         count=db.execute('SELECT COUNT(*) FROM cycles WHERE family=? AND asset=? AND end>=? AND start<=?',(family,asset,start,end)).fetchone()[0]
         bands=[]
         if count<=1000:

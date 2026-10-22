@@ -2,7 +2,6 @@
 from __future__ import annotations
 import math
 import numpy as np
-from scipy.special import logsumexp
 
 
 class GaussianHMM:
@@ -11,7 +10,7 @@ class GaussianHMM:
     Multiple contiguous training blocks have separate start distributions. No
     artificial transition is learned across omitted periods or acquisition gaps.
     """
-    def fit(self, sequences, iterations=35):
+    def fit(self, sequences, iterations=35, progress=None):
         x=np.concatenate(sequences)
         self.center=np.median(x,axis=0)
         self.scale=np.std(x,axis=0);self.scale[self.scale<1e-8]=1
@@ -24,19 +23,20 @@ class GaussianHMM:
         self.start=np.full(3,1/3)
         previous=-math.inf;self.converged=False;self.history=[]
         for iteration in range(iterations):
+            if progress:progress(iteration+1,iterations)
             starts=np.full(3,.01);trans=np.full((3,3),.01)
             weights=np.zeros(3);sx=np.zeros_like(self.means);sx2=np.zeros_like(self.means);ll=0
             for values in seq:
                 emission=self.emission_z(values);n=len(values)
                 a=np.empty((n,3));a[0]=np.log(self.start)+emission[0]
                 lt=np.log(self.trans)
-                for t in range(1,n):a[t]=emission[t]+logsumexp(a[t-1,:,None]+lt,axis=0)
-                likelihood=logsumexp(a[-1]);ll+=likelihood
+                for t in range(1,n):a[t]=emission[t]+np.logaddexp.reduce(a[t-1,:,None]+lt,axis=0)
+                likelihood=np.logaddexp.reduce(a[-1]);ll+=likelihood
                 b=np.zeros((n,3))
-                for t in range(n-2,-1,-1):b[t]=logsumexp(lt+emission[t+1]+b[t+1],axis=1)
+                for t in range(n-2,-1,-1):b[t]=np.logaddexp.reduce(lt+emission[t+1]+b[t+1],axis=1)
                 gamma=np.exp(a+b-likelihood);starts+=gamma[0]
                 weights+=gamma.sum(axis=0);sx+=gamma.T@values;sx2+=gamma.T@(values**2)
-                for t in range(n-1):trans+=np.exp(a[t,:,None]+lt+emission[t+1]+b[t+1]-likelihood)
+                trans+=np.exp(a[:-1,:,None]+lt[None,:,:]+emission[1:,None,:]+b[1:,None,:]-likelihood).sum(axis=0)
             self.start=starts/starts.sum();self.trans=trans/trans.sum(axis=1,keepdims=True)
             self.means=sx/np.maximum(weights[:,None],1e-8)
             self.var=np.maximum(sx2/np.maximum(weights[:,None],1e-8)-self.means**2,.02)
@@ -146,10 +146,11 @@ def model_cycles(db,family,asset,progress):
     allx=np.concatenate(blocks)
     if len(np.unique(allx,axis=0))<3 or np.max(allx.std(axis=0))<1e-8:return info
     progress(f'正在拟合 Gaussian HMM：{asset}')
-    hmm=GaussianHMM().fit(blocks)
+    hmm=GaussianHMM().fit(blocks,progress=lambda step,total:progress(f'HMM 参数拟合：{asset} · 迭代 {step}/{total}'))
     db.execute('DROP TABLE IF EXISTS hmm_path')
     db.execute('CREATE TEMP TABLE hmm_path(seq INTEGER PRIMARY KEY,cid INTEGER,p0 INTEGER,p1 INTEGER,p2 INTEGER,best INTEGER,segment INTEGER)')
     delta=None;prior=None;seqno=0;segment=0
+    log_trans=np.log(hmm.trans);log_start=np.log(hmm.start)
     cursor=db.execute(f'SELECT cid,{expr} FROM cycles WHERE {valid_where} ORDER BY cid',args)
     while True:
         batch=cursor.fetchmany(5000)
@@ -158,9 +159,9 @@ def model_cycles(db,family,asset,progress):
         for row,e in zip(batch,emission):
             cid=row[0]
             if delta is None or cid!=prior+1:
-                delta=np.log(hmm.start)+e;pointers=[-1]*3;segment+=1
+                delta=log_start+e;pointers=[-1]*3;segment+=1
             else:
-                choices=delta[:,None]+np.log(hmm.trans);pointers=choices.argmax(axis=0);delta=choices.max(axis=0)+e
+                choices=delta[:,None]+log_trans;pointers=choices.argmax(axis=0);delta=choices.max(axis=0)+e
             delta-=delta.max();seqno+=1
             updates.append((seqno,cid,*map(int,pointers),int(delta.argmax()),segment));prior=cid
         db.executemany('INSERT INTO hmm_path VALUES(?,?,?,?,?,?,?)',updates)

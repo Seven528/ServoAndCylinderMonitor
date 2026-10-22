@@ -7,6 +7,14 @@ const seriesNames={median:'中位数',mean:'均值',p95:'P95',p05:'P05',min:'最
 const colors=['#007bc0','#006c3a','#9e2896','#c06000','#355c7d','#525f6b','#827200'];
 const familyNames={servo:'伺服',cylinder:'气缸'};
 const controllers=[];
+const viewCache=new Map();
+function loadView(api,path,body){
+ const key=path+'|'+JSON.stringify(body);
+ if(viewCache.has(key)){const value=viewCache.get(key);viewCache.delete(key);viewCache.set(key,value);return value}
+ const promise=api(path,{method:'POST',body:JSON.stringify(body)}).catch(error=>{viewCache.delete(key);throw error});
+ viewCache.set(key,promise);while(viewCache.size>12)viewCache.delete(viewCache.keys().next().value);
+ return promise;
+}
 
 function svgPlot(title,points,keys,data,{risk=false,threshold=false,stage=false,anomaly=false}={}){
   const W=860,H=230,L=68,R=18,T=16,B=42,PW=W-L-R,PH=H-T-B;
@@ -57,8 +65,9 @@ class EquipmentView {
  this.range=[Math.max(this.full[0],this.range[0]),Math.min(this.full[1],this.range[1])];if(this.range[1]<this.range[0]){this.range=[...this.full]}this.load();
  }
  async load(){const version=++this.version;this.status.textContent='正在按所选时间范围读取完整数据…';this.content.setAttribute('aria-busy','true');
- try{const view=await this.api(`/api/equipment/${this.result.run_id}`,{method:'POST',body:JSON.stringify({family:this.family,view:this.mode,asset:this.select.value,start:this.range[0],end:this.range[1]})});if(version!==this.version)return;this.view=view;this.range=[view.start,view.end];this.host.querySelector('.time-start').value=local(view.start);this.host.querySelector('.time-end').value=local(view.end);this.draw();this.status.textContent=`${date(view.start)} — ${date(view.end)} · 蓝/白交替表示相邻周期${view.dense_cycles?'；周期密集，放大后显示周期背景':''}。${view.model_info.boundary}。`}
- catch(e){if(version===this.version){this.status.textContent=e.message;this.content.innerHTML='<p class="callout">当前区间读取失败，请重新选择。</p>'}}finally{if(version===this.version)this.content.removeAttribute('aria-busy')}
+ const began=performance.now();const timer=setInterval(()=>{if(version===this.version)this.status.textContent=`正在读取所选区间全部数据… 已等待 ${Math.floor((performance.now()-began)/1000)} 秒`},1000);
+ try{const view=await loadView(this.api,`/api/equipment/${this.result.run_id}`,{family:this.family,view:this.mode,asset:this.select.value,start:this.range[0],end:this.range[1]});if(version!==this.version)return;this.view=view;this.range=[view.start,view.end];this.host.querySelector('.time-start').value=local(view.start);this.host.querySelector('.time-end').value=local(view.end);this.draw();this.status.textContent=`${date(view.start)} — ${date(view.end)} · 蓝/白交替表示相邻周期${view.dense_cycles?'；周期密集，放大后显示周期背景':''}。${view.model_info.boundary}。`}
+ catch(e){if(version===this.version){this.status.textContent=e.message;this.content.innerHTML='<p class="callout">当前区间读取失败，请重新选择。</p>'}}finally{clearInterval(timer);if(version===this.version)this.content.removeAttribute('aria-busy')}
  }
  draw(){const v=this.view;if(!v)return;const mode=this.mode,info=v.model_info;
  let html=metrics(v,mode);
@@ -115,7 +124,7 @@ class EquipmentView {
 }
 
 export function renderEquipmentViews(result,api){
- controllers.splice(0).forEach(c=>c.version++);
+ viewCache.clear();controllers.splice(0).forEach(c=>c.version++);
  for(const [mode,id] of [['overview','overview-devices'],['diagnostic','diagnostic-devices'],['lifecycle','lifecycle-devices']]){
   const host=document.getElementById(id);host.replaceChildren();
   if(!result.equipment){host.innerHTML='<p class="callout">请重新运行完整分析以生成周期、退化指标与 HMM 状态。</p>';continue}

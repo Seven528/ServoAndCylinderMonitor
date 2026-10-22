@@ -123,3 +123,14 @@ python -m unittest discover -s integrations/servo_cylinder_agent/tests -p 'test_
 - 结果目录额外保存 `<run_id>.wave.sqlite`，包含本机规范化波形、周期特征、模型分数、阶段和模型参数，支持真实明细缩放。该文件不会传给外部模型；占用磁盘与数据量相关，重启后文件保留，网页仍需重新分析建立会话。统计临时文件仍在任务退出后清理。
 
 模型参考：[scikit-learn IsolationForest](https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.IsolationForest.html)、[HMM EM / Viterbi 教程](https://github.com/hmmlearn/hmmlearn/blob/main/doc/source/tutorial.rst)。原有逐行 MAD/状态规则保留在诊断页可展开明细中，与周期级 IF 结果不相加。
+
+## 大数据性能优化（2026-10-22）
+
+- 周期均值、转矩精确分位数和稳定速度特征改为按资产批量聚合，移除逐周期反复扫描。周期索引包含资产维度，避免不同资产同编号周期之间的多余扫描。
+- 全量采样间隔只计算一次并建立临时索引，质量统计和周期识别共用；移除页面已不使用的旧版趋势预计算，新图表按需查询。
+- 图表所有信号共用一次 `(asset, time)` 有序读取，常规时间桶使用 NumPy 精确分位数；超过内存缓冲大小的高密度桶转入临时磁盘统计。缓冲大小不是记录上限，所有匹配数据仍参与统计。浏览器复用最近 12 个区间查询，不缓存原始全量数据。
+- 工作数据库直接建立在结果目录同一磁盘，完成后关闭并原子重命名，避免完整数据库备份复制。HMM 的前后向和转移统计减少 Python 小函数调用，不改变训练样本范围、状态数和推断范围。
+- 长 SQL 每约两秒报告运行心跳并检查取消；HMM 每轮迭代更新进度；CSV 编码检测也支持进度和取消。页面显示累计耗时，区间图加载显示等待时间，完整分析完成后显示总耗时。
+- `processing.timings` 及日志 `web.performance / ANALYSIS_TIMINGS` 记录读取、全量基准、汇总统计、周期模型、保存和总耗时，可用于定位真实数据的下一处瓶颈。没有恢复文件大小或 ClickHouse 行数限制，没有用数据截断替代全量分析。
+
+同一份 10,000 行本地样例的 cProfile 观测约从 5.3 秒降低到 3.1 秒（独立 Python 进程，包含依赖加载与 profiler 开销）；完整周期数及 IsolationForest 异常周期数一致，退化均值仅有浮点累计顺序差异。该观测不是产线大数据耗时保证，实际耗时仍取决于记录/资产/周期数量、网络和本机磁盘。

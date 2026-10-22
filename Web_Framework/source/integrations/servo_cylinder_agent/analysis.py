@@ -178,7 +178,7 @@ def analyze_dataset(csv_path: Path, dictionary_path: Path | None = None, sheet=N
     # Use the known PLC dictionary as metadata only; it does not define fault thresholds.
     from .local_source import local_stream
     csv_path=Path(csv_path).resolve()
-    stream,source=local_stream(csv_path,sheet)
+    stream,source=local_stream(csv_path,sheet,progress,cancel)
     name=csv_path.name+(f" · {source['sheet']}" if source['sheet'] else '')
     return analyze_stream(stream,name,dictionary_path,csv_path.stat().st_size,source,progress,cancel)
 
@@ -186,19 +186,33 @@ def analyze_dataset(csv_path: Path, dictionary_path: Path | None = None, sheet=N
 def analyze_stream(stream,dataset_name,dictionary_path=None,source_bytes=None,source=None,progress=None,cancel=None):
     from .disk_analysis import DiskAnalysis
     from src.web_logging import get_logger
+    import time
+    started=time.perf_counter();stage_started=started;timings={}
     engine=DiskAnalysis(progress,cancel)
     try:
         for frame in stream:
             if cancel is not None and cancel.is_set():raise ValueError('分析已取消，未返回部分结果。')
             engine.add(frame)
         if not engine.rows:raise ValueError('所选数据范围没有记录。')
+        timings['read_seconds']=round(time.perf_counter()-stage_started,3)
+        stage_started=time.perf_counter()
         engine.prepare()
         if cancel is not None and cancel.is_set():raise ValueError('分析已取消，未返回部分结果。')
-        result=engine.result(dataset_name,dictionary_path,source or {},source_bytes)
+        timings['baseline_seconds']=round(time.perf_counter()-stage_started,3)
+        stage_started=time.perf_counter()
+        result=engine.result(dataset_name,dictionary_path,source or {},source_bytes,include_charts=False)
+        timings['statistics_seconds']=round(time.perf_counter()-stage_started,3)
+        stage_started=time.perf_counter()
         from .equipment_analysis import prepare_equipment,persist
         result['equipment']=prepare_equipment(engine)
+        timings['cycle_models_seconds']=round(time.perf_counter()-stage_started,3)
+        stage_started=time.perf_counter()
         engine.progress('正在保存可缩放的本机波形明细')
         persist(engine,result)
+        timings['save_seconds']=round(time.perf_counter()-stage_started,3)
+        timings['total_seconds']=round(time.perf_counter()-started,3)
+        result['processing']['timings']=timings
+        get_logger().write_log('INFO','web.performance',f'ANALYSIS_TIMINGS | rows={engine.rows} | timings={timings}')
         get_logger().write_log('INFO','web.analysis',f'FULL_ANALYSIS_COMPLETE | rows={engine.rows} | disk_statistics=True')
         return result
     finally:

@@ -5,6 +5,7 @@ import json
 import math
 import sqlite3
 import tempfile
+import time
 from functools import lru_cache
 from collections import Counter
 from pathlib import Path
@@ -43,19 +44,45 @@ def _true(series):return series.astype(str).str.lower().isin(['true','1','1.0','
 
 class DiskAnalysis:
     def __init__(self,progress=None,cancel=None):
-        self.temporary=tempfile.TemporaryDirectory(prefix='servo-analysis-')
-        self.db=sqlite3.connect(str(Path(self.temporary.name)/'statistics.sqlite'))
+        from .analysis import PROJECT_ROOT
+        work_root=PROJECT_ROOT/'data'/'output'/'web_agent_runs'
+        work_root.mkdir(parents=True,exist_ok=True)
+        self.temporary=tempfile.TemporaryDirectory(prefix='.processing-',dir=str(work_root))
+        self.database_path=Path(self.temporary.name)/'statistics.sqlite'
+        self.db=sqlite3.connect(str(self.database_path))
+        self._notify=progress or (lambda _:None)
+        self._message='正在准备分析';self._heartbeat=time.monotonic();self.cancel=cancel
+        self._intervals_ready=False
         self.db.execute('PRAGMA temp_store=FILE')
         self.db.execute('PRAGMA cache_size=-65536')
         self.db.execute('PRAGMA journal_mode=OFF')
         self.db.execute('PRAGMA synchronous=OFF')
-        if cancel is not None:self.db.set_progress_handler(lambda:int(cancel.is_set()),10000)
+        self.db.set_progress_handler(self._sql_progress,10000)
         self.db.execute('CREATE TABLE samples(id INTEGER PRIMARY KEY,asset TEXT,context TEXT,context_speed TEXT,ts REAL,moving INTEGER,row_hash TEXT,asset_id TEXT,event INTEGER,diagno TEXT,flags TEXT,screened INTEGER,execute INTEGER,accelerating INTEGER,decelerating INTEGER,standstill INTEGER,'+','.join(f'{col} REAL' for col in METRICS)+')')
-        self.progress=progress or (lambda _:None)
         self.columns=None;self.available=set();self.missing=Counter();self.rows=0;self.pred_columns={}
 
+    def progress(self,message):
+        if self.cancel is not None and self.cancel.is_set():raise ValueError('分析已取消，未返回部分结果。')
+        self._message=message;self._heartbeat=time.monotonic();self._notify(message)
+
+    def _sql_progress(self):
+        if self.cancel is not None and self.cancel.is_set():return 1
+        if time.monotonic()-self._heartbeat>=2:
+            self._heartbeat=time.monotonic();self._notify(self._message)
+        return 0
+
     def close(self):
-        self.db.close();self.temporary.cleanup()
+        if self.db is not None:self.db.close()
+        self.temporary.cleanup()
+
+    def ensure_intervals(self):
+        if self._intervals_ready:return
+        self.progress('正在一次性计算并缓存全量采样间隔')
+        self.db.execute('CREATE INDEX IF NOT EXISTS samples_asset_time ON samples(asset,ts,id)')
+        self.db.execute('CREATE TEMP TABLE sample_intervals AS SELECT asset,ts-LAG(ts) OVER(PARTITION BY asset ORDER BY ts,id) value FROM samples WHERE ts IS NOT NULL')
+        self.db.execute('CREATE INDEX interval_value ON sample_intervals(value)')
+        self.db.execute('CREATE INDEX interval_asset_value ON sample_intervals(asset,value)')
+        self._intervals_ready=True
 
     def add(self,raw):
         from .analysis import PREDICTOR_COLUMNS
@@ -162,6 +189,7 @@ class DiskAnalysis:
     def _baseline(self,asset,context,where,params):
         for signal,_,_ in SIGNALS:
             if signal not in self.available:continue
+            self.progress(f'正在计算{"资产" if context=="*" else "工况"}全量基准：{asset} · {signal}')
             n=self.db.execute(f'SELECT COUNT({signal}) FROM samples WHERE {where}',params).fetchone()[0]
             if not n:continue
             median=self.quantile(signal,where,params,n=n)
@@ -173,7 +201,7 @@ class DiskAnalysis:
                 scale=math.sqrt(max(0,a-b*b))
             self.db.execute('INSERT INTO baselines VALUES(?,?,?,?,?,?,?)',(asset,context,signal,median,mad,scale,n))
 
-    def result(self,dataset,dictionary_path,source,source_bytes):
+    def result(self,dataset,dictionary_path,source,source_bytes,include_charts=True):
         from .analysis import _records,predictive_summary
         self.progress('正在生成覆盖全部记录的统计结果')
         first,last=self.db.execute('SELECT MIN(ts),MAX(ts) FROM samples').fetchone()
@@ -220,18 +248,18 @@ class DiskAnalysis:
         if dictionary_path and Path(dictionary_path).exists():dictionary=_records(pd.read_excel(dictionary_path),200)
         return {'run_id':__import__('uuid').uuid4().hex,'dataset':dataset,'source':{**source,'rows':self.rows,'unlimited':True},'source_bytes':source_bytes,'dictionary':dictionary,
             'engine':'disk-statistical-v2','processing':{'mode':'disk-backed-full-population','rows_processed':self.rows,'source_truncated':False,'quantiles':'exact','assets_displayed':len(asset_rows),'assets_total':assets_count},
-            'descriptive':{'assets':asset_rows,'top_level':{'rows':self.rows,'duplicate_rows':duplicate,'asset_groups':assets_count,'first_timestamp':_time(first),'last_timestamp':_time(last),'window_hours':hours,'sample_interval_seconds':interval},'quality':quality,'charts':self._charts(first,last)},
+            'descriptive':{'assets':asset_rows,'top_level':{'rows':self.rows,'duplicate_rows':duplicate,'asset_groups':assets_count,'first_timestamp':_time(first),'last_timestamp':_time(last),'window_hours':hours,'sample_interval_seconds':interval},'quality':quality,'charts':self._charts(first,last) if include_charts else [],'charts_on_demand':not include_charts},
             'diagnostic':{'event_record_count':event_count,'flag_counts':counts,'events':events,'diagnostic_status_bits':{flag.split('_ASSERTED')[0].lower():next((item['records'] for item in counts if item['flag']==flag),0) for flag in STATE_FLAGS[:3]},
                 'notes':['全部记录参与统计；中位数、P95、MAD 在磁盘上精确计算，未对原始数据抽样。','大数据基准按资产、执行阶段、运动方向和低基数速度分组；小工况回退到同一资产全窗基准。','连续快照计数不等于独立故障次数；诊断位含义仍需机型手册确认。','界面仅展示最新 100 条异常明细及前 100 个资产，汇总计数覆盖全部数据。']},
             'lifecycle':{'assets':health,'method':'健康分 = 100 × (1 − 同资产全量数据中含统计/状态异常的快照比例)，不包含未解释的 CLASS 诊断位。','notes':['筛查分不是可靠性概率、真实生命周期阶段或剩余寿命。','基准覆盖全部选定数据，不在每个读取批次内重新拟合。']},
             'predictive':predictive_summary(self.pred_columns,explicit_assets if self.pred_columns['asset'] else assets_count,event_rows,hours)}
 
     def _interval(self,q):
-        query='SELECT ts-LAG(ts) OVER(PARTITION BY asset ORDER BY ts) AS value FROM samples WHERE ts IS NOT NULL'
-        n=self.db.execute('SELECT COUNT(*) FROM ('+query+') WHERE value IS NOT NULL').fetchone()[0]
+        self.ensure_intervals()
+        n=self.db.execute('SELECT COUNT(*) FROM sample_intervals WHERE value IS NOT NULL').fetchone()[0]
         if not n:return None
         rank=(n-1)*q;offset=int(rank)
-        values=self.db.execute('SELECT value FROM ('+query+') WHERE value IS NOT NULL ORDER BY value LIMIT 2 OFFSET ?',(offset,)).fetchall()
+        values=self.db.execute('SELECT value FROM sample_intervals WHERE value IS NOT NULL ORDER BY value LIMIT 2 OFFSET ?',(offset,)).fetchall()
         return values[0][0]+(values[-1][0]-values[0][0])*(rank-offset)
 
     def _charts(self,first,last):

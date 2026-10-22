@@ -100,14 +100,15 @@ class AgentServer(ThreadingHTTPServer):
                 self.jobs.pop(oldest)
                 self.cancel_events.pop(oldest,None)
             jid = 'j_' + uuid.uuid4().hex
-            self.jobs[jid] = {'id': jid, 'status': 'queued', 'dataset': label, 'stage': stage}
+            self.jobs[jid] = {'id': jid, 'status': 'queued', 'dataset': label, 'stage': stage,'created_at':time.time(),'updated_at':time.time()}
             self.cancel_events[jid] = threading.Event()
             get_logger().write_log('INFO', 'web.jobs', f'JOB_QUEUED | job={jid} | source={label!r}')
             return jid
 
     def progress(self,jid,message):
         if self.cancel_events[jid].is_set():raise ValueError('分析已取消，未返回部分结果。')
-        with self.lock:self.jobs[jid]['stage']=message
+        with self.lock:
+            self.jobs[jid].update(stage=message,updated_at=time.time())
 
     def cancel_job(self,jid):
         with self.lock:
@@ -176,7 +177,7 @@ class AgentServer(ThreadingHTTPServer):
         get_logger().write_log('INFO', 'web.analysis', f"ANALYSIS_COMPLETE | job={jid} | run={result['run_id']} | rows={result['descriptive']['top_level']['rows']}")
         with self.lock:
             self.results[result['run_id']] = result
-            self.jobs[jid].update(status='succeeded', stage='全量分析完成', result=result)
+            self.jobs[jid].update(status='succeeded', stage='全量分析完成', result=result,updated_at=time.time())
             while len(self.results) > 5:
                 self.results.pop(next(iter(self.results)))
 
@@ -335,7 +336,12 @@ class Handler(BaseHTTPRequestHandler):
         if url.path.startswith("/api/jobs/"):
             jid = url.path.rsplit("/", 1)[-1]
             with self.server.lock:
-                job = self.server.jobs.get(jid)
+                stored=self.server.jobs.get(jid)
+                job=dict(stored) if stored else None
+                if job:
+                    now=time.time() if job['status'] in ('queued','running') else job.get('updated_at',time.time())
+                    job['elapsed_seconds']=max(0,now-job.get('created_at',now))
+                    job['heartbeat_seconds']=max(0,time.time()-job.get('updated_at',time.time()))
             return self._send(200, job or {"error": "任务不存在。"})
         return self._send(404, {"error": "页面不存在。"})
 

@@ -37,30 +37,34 @@ def inspect_file(path):
     return {'name':path.name,'bytes':path.stat().st_size,'sheets':sheets}
 
 
-def _csv_encoding(path):
+def _csv_encoding(path,progress=None,cancel=None):
     # Validate UTF-8 incrementally before ingestion, so a late decoding error
     # cannot restart the source and count an already processed prefix twice.
     decoder=codecs.getincrementaldecoder('utf-8-sig')()
     try:
+        inspected=0
         with path.open('rb') as stream:
             while True:
+                if cancel is not None and cancel.is_set():raise ValueError('分析已取消，未返回部分结果。')
                 data=stream.read(1024*1024)
                 if not data:break
                 decoder.decode(data,final=False)
+                inspected+=len(data)
+                if progress and inspected%(8*1024*1024)==0:progress(f'正在检查 CSV 编码：已读取 {inspected/(1024**2):,.0f} MiB / {path.stat().st_size/(1024**2):,.0f} MiB')
             decoder.decode(b'',final=True)
         return 'utf-8-sig'
     except UnicodeDecodeError:
         return 'gb18030'
 
 
-def frame_stream(path,sheet=None,batch_rows=BATCH_ROWS):
+def frame_stream(path,sheet=None,batch_rows=BATCH_ROWS,progress=None,cancel=None):
     path=validate_file(path)
     if not isinstance(batch_rows,int) or batch_rows<1:
         raise ValueError('批次行数须为正整数。')
     if path.suffix.lower()=='.csv':
         if sheet is not None:raise ValueError('CSV 文件不支持工作表选择。')
         try:
-            with pd.read_csv(path,encoding=_csv_encoding(path),dtype=object,chunksize=batch_rows) as reader:
+            with pd.read_csv(path,encoding=_csv_encoding(path,progress,cancel),dtype=object,chunksize=batch_rows) as reader:
                 for frame in reader:
                     if not frame.empty:yield frame
         except UnicodeDecodeError:
@@ -82,12 +86,12 @@ def frame_stream(path,sheet=None,batch_rows=BATCH_ROWS):
     finally:book.close()
 
 
-def local_stream(path,sheet=None):
+def local_stream(path,sheet=None,progress=None,cancel=None):
     path=validate_file(path)
     details=inspect_file(path)
     selected=sheet if sheet is not None else (details['sheets'][0] if details['sheets'] else None)
     source={'kind':'xlsx' if details['sheets'] else 'csv','filename':path.name,'sheet':selected,'unlimited':True}
-    return frame_stream(path,selected),source
+    return frame_stream(path,selected,progress=progress,cancel=cancel),source
 
 
 def load_frame(path,sheet=None):

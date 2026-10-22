@@ -1,0 +1,253 @@
+{
+  "title": "伺服与气缸分析 Agent｜项目介绍与技术架构",
+  "subtitle": "从设备信号到可复核的异常与状态证据",
+  "surface": "report",
+  "status": "reviewed",
+  "generatedAt": "2026-10-22T09:53:47.824207+08:00",
+  "report": {
+    "asOf": "2026-10-22"
+  },
+  "filters": [],
+  "queries": {
+    "capabilities": {
+      "rows": [
+        {
+          "area": "描述分析",
+          "servo": "转矩、速度、位置/跟随误差与设定值波形；均值、分位数、标准差",
+          "cylinder": "工作/回程时间及动作计数",
+          "implementation": "已实现：资产分区、周期底色、时间缩放",
+          "boundary": "周期边界来自状态信号或计数代理，仍需与 PLC 工艺定义对齐"
+        },
+        {
+          "area": "诊断分析",
+          "servo": "MAD / 状态规则 + 周期级 IsolationForest + mean degradation",
+          "cylinder": "动作时间/周期时长 IsolationForest；状态与时间筛查",
+          "implementation": "已实现：异常分数图及模型说明",
+          "boundary": "异常快照和异常周期不能相加，不等同独立故障"
+        },
+        {
+          "area": "生命周期",
+          "servo": "Gaussian HMM，优先使用转矩幅度与稳定速度不稳定度",
+          "cylinder": "Gaussian HMM，使用工作/回程时间和周期时长",
+          "implementation": "已实现：阶段 0 / 1 / 2、红色高危区域",
+          "boundary": "相对波形状态；未验证真实生命周期与次品概率"
+        },
+        {
+          "area": "预测分析",
+          "servo": "检查资产 ID、使用年龄、确认失效标签与时间覆盖",
+          "cylinder": "相同准备度流程",
+          "implementation": "仅数据准备度；RUL 不输出数值",
+          "boundary": "Weibull、阈值到达与时序预测仍为候选方法"
+        }
+      ],
+      "source": {
+        "label": "当前版本能力核对",
+        "files": [
+          "Web_Framework/source/integrations/servo_cylinder_agent/README.zh-CN.md",
+          "Web_Framework/source/integrations/servo_cylinder_agent/web/equipment.js"
+        ],
+        "description": "基于当前代码与说明逐项核对。已实现能力与待验证、候选能力分列。",
+        "evidenceFlow": [
+          {
+            "title": "代码与本地结果核对",
+            "detail": "基于当前代码与说明逐项核对。已实现能力与待验证、候选能力分列。"
+          }
+        ]
+      }
+    },
+    "architecture": {
+      "rows": [
+        {
+          "layer": "输入",
+          "technology": "ClickHouse HTTP / JSONEachRow；CSV；XLSX",
+          "role": "读取选定时间/站点范围或本机文件"
+        },
+        {
+          "layer": "编排",
+          "technology": "Python ThreadingHTTPServer + 单工作线程任务队列",
+          "role": "会话、连接、异步任务、进度与取消"
+        },
+        {
+          "layer": "计算",
+          "technology": "Pandas + NumPy + SQLite",
+          "role": "分批规范化；磁盘精确统计；周期提取；区间查询"
+        },
+        {
+          "layer": "模型",
+          "technology": "scikit-learn IsolationForest；本地 Gaussian HMM",
+          "role": "周期异常评分、相对退化指标与状态推断"
+        },
+        {
+          "layer": "问答",
+          "technology": "本地规则问答；可选 Codex app-server / stdio",
+          "role": "读取已计算证据，生成有边界的中文解释"
+        },
+        {
+          "layer": "展示",
+          "technology": "原生 HTML / CSS / ES Modules / SVG",
+          "role": "Bosch 工作台、设备分区、周期底色、图表缩放与语音输入"
+        }
+      ],
+      "source": {
+        "label": "当前版本实现架构",
+        "files": [
+          "Web_Framework/source/integrations/servo_cylinder_agent/server.py",
+          "Web_Framework/source/integrations/servo_cylinder_agent/analysis.py",
+          "Web_Framework/source/integrations/servo_cylinder_agent/agent_models.py",
+          "Web_Framework/source/integrations/servo_cylinder_agent/codex_runtime.py"
+        ],
+        "description": "静态阅读当前实现，未调用外部模型或连接产线数据库。当前分析流程由固定 Python 管线编排，模型问答无源文件/数据库工具权限。",
+        "evidenceFlow": [
+          {
+            "title": "代码与本地结果核对",
+            "detail": "静态阅读当前实现，未调用外部模型或连接产线数据库。当前分析流程由固定 Python 管线编排，模型问答无源文件/数据库工具权限。"
+          }
+        ]
+      }
+    },
+    "benchmark": {
+      "rows": [
+        {
+          "version": "优化前",
+          "seconds": 5.312
+        },
+        {
+          "version": "优化后",
+          "seconds": 3.072
+        }
+      ],
+      "source": {
+        "label": "10,000 行样例 cProfile 观测",
+        "files": [
+          "Web_Framework/source/integrations/servo_cylinder_agent/README.zh-CN.md"
+        ],
+        "description": "归档本轮开发历史中独立进程的 cProfile 输出摘要：优化前 5.312 秒，优化后 3.072 秒。单次观测，含依赖加载与 profiler 开销；不是统计显著性结论或大数据吞吐承诺。",
+        "evidenceFlow": [
+          {
+            "title": "代码与本地结果核对",
+            "detail": "归档本轮开发历史中独立进程的 cProfile 输出摘要：优化前 5.312 秒，优化后 3.072 秒。单次观测，含依赖加载与 profiler 开销；不是统计显著性结论或大数据吞吐承诺。"
+          }
+        ]
+      }
+    },
+    "stage_timings": {
+      "rows": [
+        {
+          "phase": "数据读取",
+          "seconds": 0.865
+        },
+        {
+          "phase": "统计基准",
+          "seconds": 0.172
+        },
+        {
+          "phase": "汇总统计",
+          "seconds": 0.269
+        },
+        {
+          "phase": "周期模型",
+          "seconds": 0.991
+        },
+        {
+          "phase": "明细保存",
+          "seconds": 0.002
+        }
+      ],
+      "source": {
+        "label": "优化版网页实际运行阶段耗时",
+        "files": [
+          "data/output/web_agent_runs/4013e38286d84968a295b5c35bfb62c9/analysis.json",
+          "data/output/logger/20261022.log"
+        ],
+        "description": "来自已保存 processing.timings：总耗时 2.3 秒。各阶段按三位小数四舍五入，和约为 2.299 秒；该网页运行未启用 cProfile，不能与 cProfile 的 3.072 秒直接比较。",
+        "evidenceFlow": [
+          {
+            "title": "代码与本地结果核对",
+            "detail": "来自已保存 processing.timings：总耗时 2.3 秒。各阶段按三位小数四舍五入，和约为 2.299 秒；该网页运行未启用 cProfile，不能与 cProfile 的 3.072 秒直接比较。"
+          }
+        ]
+      }
+    },
+    "sample": {
+      "rows": [
+        {
+          "设备": "伺服",
+          "完整周期": 54,
+          "IF异常周期": 13,
+          "HMM已解码周期": 53,
+          "退化可计算周期": 21,
+          "mean_degradation": 32.11485642087173
+        },
+        {
+          "设备": "气缸",
+          "完整周期": 218,
+          "IF异常周期": 41,
+          "HMM已解码周期": 218,
+          "退化可计算周期": null,
+          "mean_degradation": null
+        }
+      ],
+      "source": {
+        "label": "参考站点 10,000 行导出样例",
+        "files": [
+          "data/output/web_agent_runs/4013e38286d84968a295b5c35bfb62c9/analysis.json"
+        ],
+        "description": "同一站点导出样例，时间范围 2026-09-13 00:17:57.331 至 00:34:41.608（北京时间），约 16.74 分钟、38 字段。均为筛查输出而非确认故障标签。仅保存脱离原始资产标识的汇总。",
+        "evidenceFlow": [
+          {
+            "title": "代码与本地结果核对",
+            "detail": "同一站点导出样例，时间范围 2026-09-13 00:17:57.331 至 00:34:41.608（北京时间），约 16.74 分钟、38 字段。均为筛查输出而非确认故障标签。仅保存脱离原始资产标识的汇总。"
+          }
+        ]
+      }
+    }
+  },
+  "implementationEvidence": [
+    {
+      "file": "server.py",
+      "sha256": "440a0e4c2e0b9682ba0f5a91a3f8cabf1e459a8e2d59ffb68249999c8558d90a"
+    },
+    {
+      "file": "analysis.py",
+      "sha256": "75de53bb9947d04b922b70d95798f0b5f319b82e0a24146e72e72a121d489cad"
+    },
+    {
+      "file": "disk_analysis.py",
+      "sha256": "2600e67d76ae378451b826b46e55e778a45a2778b1a3d3e39a4c045fcdd1e232"
+    },
+    {
+      "file": "equipment_analysis.py",
+      "sha256": "b6b76e1984918409a29eaca884b351bf9a1023c392222d03be09fdf1c29f08fa"
+    },
+    {
+      "file": "cycle_features.py",
+      "sha256": "dc43bc6b4efd0a5aac77d3ca32036c851528282d49805f9753c588235fcbd8f5"
+    },
+    {
+      "file": "wave_models.py",
+      "sha256": "eb0cd66b9c3ccb182f599d077fa2fb8e18ac8d409b1ec7b88efa2770e20080fa"
+    },
+    {
+      "file": "chart_queries.py",
+      "sha256": "ffbae2e19047fd94292a5781bd3c4f9120ec8056102b76cc358d6f945c3bb589"
+    },
+    {
+      "file": "agent_models.py",
+      "sha256": "f81eec936af17950ac57cd66f45963f745a92462ea92f7bc1467b199cbc36acf"
+    },
+    {
+      "file": "codex_runtime.py",
+      "sha256": "877e06fc896d7cdd481b79eecc4d057cb04f31d910bca7719bb7a08e6f7b0a98"
+    },
+    {
+      "file": "clickhouse_source.py",
+      "sha256": "b7c7841c7d3f8f7417195db43911a525448c49f7278a991a0106c716026a0aa3"
+    },
+    {
+      "file": "local_source.py",
+      "sha256": "53ee0fe5cd467f86a515302d65ee4dae155eabc7b9c12e494bbb451035b05ed6"
+    }
+  ],
+  "id": "report:ecbd8236-104c-466c-99dd-3ffa2148e8ca",
+  "buildStatus": "complete"
+}

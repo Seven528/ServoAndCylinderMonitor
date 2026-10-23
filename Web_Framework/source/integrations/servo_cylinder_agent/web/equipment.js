@@ -35,9 +35,21 @@ function svgPlot(title,points,keys,data,{risk=false,threshold=false,stage=false,
   return `<article class="wave-chart"><h4>${esc(title)}</h4><svg class="zoom-plot" viewBox="0 0 ${W} ${H}" tabindex="0" role="img" aria-label="${esc(title)}。拖动选择时间范围，双击恢复全部。" data-left="${L/W}" data-right="${(W-R)/W}"><rect x="${L}" y="${T}" width="${PW}" height="${PH}" fill="#f7f9fa"/>${bands}${red}${grid}${zero}${paths}${marks}${labels}<rect class="brush-selection" y="${T}" height="${PH}" fill="#007bc0" opacity=".18" hidden/></svg><div class="chart-legend">${keys.map((k,i)=>`<span><i class="legend-dot" style="background:${colors[i%colors.length]}"></i>${esc(seriesNames[k]||k)}</span>`).join('')}${threshold?'<span class="danger-text">红点：桶内有异常周期；红虚线：分数 0 阈值</span>':''}${risk?'<span class="danger-text">红色半透明：阶段 2 危险区域（模型筛查）</span>':''}</div><output class="wave-tooltip">悬停查看数值；拖动框选时间，双击恢复全部。</output></article>`;
 }
 
+function overlayPlot(chart,overlay){
+ const cycles=overlay?.cycles[chart.key]||[],W=860,H=260,L=68,R=18,T=16,B=50;
+ if(!cycles.length)return `<article class="wave-chart"><h4>${esc(chart.label)} · 周期叠加</h4><p>当前区间没有首尾均包含在视图中的完整周期。</p></article>`;
+ let low=Infinity,high=-Infinity,end=0;
+ for(const c of cycles){end=Math.max(end,c.duration);for(const p of c.points){low=Math.min(low,p.min);high=Math.max(high,p.max)}}
+ const pad=(high-low||1)*.08;low-=pad;high+=pad;
+ const x=t=>L+t/Math.max(end,.000001)*(W-L-R),y=v=>T+(high-v)/(high-low)*(H-T-B);
+ const paths=cycles.map((c,i)=>{let prior=null,line='',envelope='';for(const p of c.points){const gap=prior==null||p.time-prior.time>c.duration/160*2.1;line+=`${gap?'M':'L'}${x(p.time)},${y(p.mean)} `;envelope+=`M${x(p.time)},${y(p.min)} L${x(p.time)},${y(p.max)} `;prior=p}const color=colors[i%colors.length];return `<g><title>周期 ${c.cid} · ${esc(date(c.start))} · 时长 ${num(c.duration,3)} 秒</title><path d="${envelope}" stroke="${color}" opacity=".12"/><path d="${line}" stroke="${color}" opacity=".55" fill="none" stroke-width="1.2"/></g>`}).join('');
+ const ticks=[0,.5,1].map(r=>`<line x1="${L}" x2="${W-R}" y1="${T+r*(H-T-B)}" y2="${T+r*(H-T-B)}" stroke="#dde4e8"/><text x="${L-8}" y="${T+r*(H-T-B)+4}" text-anchor="end">${num(high-r*(high-low),3)}</text><text x="${x(r*end)}" y="${H-28}" text-anchor="${r===0?'start':r===1?'end':'middle'}">${num(r*end,3)} s</text>`).join('');
+ return `<article class="wave-chart"><h4>${esc(chart.label)} · 周期叠加</h4><svg class="overlay-plot" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(chart.label)}周期叠加图"><rect x="${L}" y="${T}" width="${W-L-R}" height="${H-T-B}" fill="#f7f9fa"/>${ticks}${paths}<text x="${(W+L-R)/2}" y="${H-5}" text-anchor="middle">周期内经过时间（秒）</text></svg><p class="method-copy">${cycles.length} 条周期曲线；按起点对齐，保留真实时长，不拉伸。线为周期内时间桶均值，淡色竖线保留桶内最小—最大值；每周期最多 160 桶。悬停曲线查看周期编号、起点和时长。颜色仅区分曲线。</p></article>`;
+}
+
 function metrics(view,mode){
  const s=view.scope,ifm=view.model_info.isolation_forest;
- const items=mode==='overview'?[["区间记录",view.charts[0]?.statistics.count],["相交周期",view.cycle_count],["完整周期",s.complete_cycles]]:mode==='diagnostic'?[["完整周期",s.complete_cycles],["IF 异常周期",s.if_anomalies],["mean degradation",s.mean_degradation==null?'不可计算':num(s.mean_degradation)+' / 100']]:[["HMM 已划分周期",s.hmm_cycles],["阶段 2 周期",s.high_risk_cycles],["高危占比",s.hmm_cycles?num(s.high_risk_cycles/s.hmm_cycles*100)+'%':'不可计算']];
+ const items=mode==='overview'?[["区间记录",view.charts[0]?.statistics.count],["相交候选产品周期",view.cycle_count],["完整候选产品周期",s.complete_cycles]]:mode==='diagnostic'?[["完整候选产品周期",s.complete_cycles],["IF 异常周期",s.if_anomalies],["mean degradation",s.mean_degradation==null?'不可计算':num(s.mean_degradation)+' / 100']]:[["HMM 已划分周期",s.hmm_cycles],["阶段 2 周期",s.high_risk_cycles],["高危占比",s.hmm_cycles?num(s.high_risk_cycles/s.hmm_cycles*100)+'%':'不可计算']];
  return `<div class="equipment-kpis">${items.map(([label,value])=>`<div><small>${esc(label)}</small><strong>${typeof value==='number'?num(value,0):esc(value)}</strong></div>`).join('')}</div>`;
 }
 
@@ -45,7 +57,7 @@ class EquipmentView {
  constructor(host,mode,family,result,api){this.host=host;this.mode=mode;this.family=family;this.result=result;this.api=api;this.catalog=result.equipment[family];this.assets=this.catalog.assets;this.keys=['median','mean','p95'];this.version=0;this.drawShell()}
  drawShell(){
   const name=familyNames[this.family];
-  this.host.innerHTML=`<section class="equipment-section"><header class="equipment-heading"><h3>${name}<small>${this.mode==='overview'?'波形与周期':this.mode==='diagnostic'?'异常与退化':'生命周期状态'}</small></h3><span>按资产独立计算</span></header><div class="equipment-body">${!this.assets.length?'<p class="callout">当前数据没有可用的'+name+'字段或有效时间戳。</p>':`<div class="asset-picker"><label>资产<select aria-label="${name}资产"></select></label><form class="asset-search"><label>查找资产<input type="search" placeholder="输入资产名称或站点" aria-label="查找${name}资产"/></label><button type="submit">查找</button></form></div><p class="muted asset-scope"></p><div class="time-toolbar"><button data-action="all">全部时间</button><button data-action="in">放大 ＋</button><button data-action="out">缩小 −</button><button data-action="prev" aria-label="向前平移时间">←</button><button data-action="next" aria-label="向后平移时间">→</button><label>开始<input class="time-start" type="datetime-local" step=".001"/></label><label>结束<input class="time-end" type="datetime-local" step=".001"/></label><button data-action="apply">应用区间</button></div><div class="stat-options" ${this.mode!=='overview'?'hidden':''}><span>显示统计：</span>${['median','mean','p05','p95','min','max','std'].map(k=>`<label><input type="checkbox" value="${k}" ${this.keys.includes(k)?'checked':''}/> ${seriesNames[k]}</label>`).join('')}</div><p class="equipment-status" role="status"></p><div class="equipment-content"></div>`}</div></section>`;
+  this.host.innerHTML=`<section class="equipment-section"><header class="equipment-heading"><h3>${name}<small>${this.mode==='overview'?'产品周期与波形':this.mode==='diagnostic'?'异常与退化':'生命周期状态'}</small></h3><span>按资产独立计算</span></header><div class="equipment-body">${!this.assets.length?'<p class="callout">当前数据没有可用的'+name+'字段或有效时间戳。</p>':`<div class="asset-picker"><label>资产<select aria-label="${name}资产"></select></label><form class="asset-search"><label>查找资产<input type="search" placeholder="输入资产名称或站点" aria-label="查找${name}资产"/></label><button type="submit">查找</button></form></div><p class="muted asset-scope"></p><div class="time-toolbar"><button data-action="all">全部时间</button><button data-action="in">放大 ＋</button><button data-action="out">缩小 −</button><button data-action="prev" aria-label="向前平移时间">←</button><button data-action="next" aria-label="向后平移时间">→</button><label>开始<input class="time-start" type="datetime-local" step=".001"/></label><label>结束<input class="time-end" type="datetime-local" step=".001"/></label><button data-action="apply">应用区间</button></div><div class="stat-options" ${this.mode!=='overview'?'hidden':''}><span>显示统计：</span>${['median','mean','p05','p95','min','max','std'].map(k=>`<label><input type="checkbox" value="${k}" ${this.keys.includes(k)?'checked':''}/> ${seriesNames[k]}</label>`).join('')}</div><p class="equipment-status" role="status"></p><div class="equipment-content"></div>`}</div></section>`;
   if(!this.assets.length)return;
   this.select=this.host.querySelector('select');this.content=this.host.querySelector('.equipment-content');this.status=this.host.querySelector('.equipment-status');this.fillAssets();
   this.select.onchange=()=>this.reset();
@@ -66,14 +78,16 @@ class EquipmentView {
  }
  async load(){const version=++this.version;this.status.textContent='正在按所选时间范围读取完整数据…';this.content.setAttribute('aria-busy','true');
  const began=performance.now();const timer=setInterval(()=>{if(version===this.version)this.status.textContent=`正在读取所选区间全部数据… 已等待 ${Math.floor((performance.now()-began)/1000)} 秒`},1000);
- try{const view=await loadView(this.api,`/api/equipment/${this.result.run_id}`,{family:this.family,view:this.mode,asset:this.select.value,start:this.range[0],end:this.range[1]});if(version!==this.version)return;this.view=view;this.range=[view.start,view.end];this.host.querySelector('.time-start').value=local(view.start);this.host.querySelector('.time-end').value=local(view.end);this.draw();this.status.textContent=`${date(view.start)} — ${date(view.end)} · 蓝/白交替表示相邻周期${view.dense_cycles?'；周期密集，放大后显示周期背景':''}。${view.model_info.boundary}。`}
+ try{const view=await loadView(this.api,`/api/equipment/${this.result.run_id}`,{family:this.family,view:this.mode,asset:this.select.value,start:this.range[0],end:this.range[1],overlay_page:this.overlayPage||0});if(version!==this.version)return;this.view=view;this.range=[view.start,view.end];this.host.querySelector('.time-start').value=local(view.start);this.host.querySelector('.time-end').value=local(view.end);this.draw();this.status.textContent=`${date(view.start)} — ${date(view.end)} · 蓝/白交替表示相邻周期${view.dense_cycles?'；周期密集，放大后显示周期背景':''}。${view.model_info.boundary}。`}
  catch(e){if(version===this.version){this.status.textContent=e.message;this.content.innerHTML='<p class="callout">当前区间读取失败，请重新选择。</p>'}}finally{clearInterval(timer);if(version===this.version)this.content.removeAttribute('aria-busy')}
  }
  draw(){const v=this.view;if(!v)return;const mode=this.mode,info=v.model_info;
  let html=metrics(v,mode);
  if(mode==='overview'){
   html+=`<p class="method-copy">${esc(v.statistics)} P05/P95 描述分布两端；标准差表示桶内离散程度，不是置信区间。首尾不完整周期仍展示波形，不进入周期模型。</p>`;
-  html+=v.charts.map(c=>svgPlot(c.label,c.points,this.keys,v)).join('');
+  html+=`<p class="method-copy">候选产品周期包含动作组内所有运行、保持、等待和返回；结束于下一个动作组起点。${esc(info.product_cycle?.definition||'旧版指令周期，请重新运行分析更新周期口径。')} 静止阈值 ${num(info.product_cycle?.idle_seconds,3)} 秒。起点前和最后未闭合片段不进入模型；平坦段有数值代表持续采样。叠加图仅包含首尾均在当前区间内的完整周期（${num(v.overlays?.total,0)} 个），与上方“完整周期”起点统计口径不同。</p>`;
+  if(v.overlays?.pages>1)html+=`<div class="overlay-pager"><button data-overlay-step="-1" ${v.overlays.page===0?'disabled':''}>上一批周期</button> 第 ${v.overlays.page+1} / ${v.overlays.pages} 批，每批最多 200 个，按时间顺序 <button data-overlay-step="1" ${v.overlays.page+1>=v.overlays.pages?'disabled':''}>下一批周期</button></div>`;
+  html+=v.charts.map(c=>`<div class="wave-pair">${svgPlot(c.label+' · 时间趋势',c.points,this.keys,v)}${overlayPlot(c,v.overlays)}</div>`).join('');
   html+=`<details class="details"><summary>所选时间范围描述统计</summary><div class="table-wrap"><table><thead><tr><th>信号</th><th>有效记录</th><th>均值</th><th>最小值</th><th>最大值</th></tr></thead><tbody>${v.charts.map(c=>`<tr><td>${esc(c.label)}</td>${['count','mean','min','max'].map(k=>`<td>${num(c.statistics[k],k==='count'?0:3)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
  } else if(mode==='diagnostic'){
   const m=info.isolation_forest;
@@ -105,7 +119,7 @@ class EquipmentView {
    html+=v.charts.filter(c=>signals.includes(c.key)).map(c=>svgPlot(c.label+' · 危险区域叠加',c.points,['median','p95'],v,{risk:true})).join('');
   }else html+='<p class="callout">HMM 暂不可用：至少需要 30 个特征完整的周期，以及足够的波形变化。缺失稳定速度片段时，伺服状态不会用虚构数值补齐。</p>';
  }
- this.content.innerHTML=html;this.bindPlots();
+ this.content.innerHTML=html;this.content.querySelectorAll('[data-overlay-step]').forEach(b=>b.onclick=()=>{this.overlayPage=this.view.overlays.page+Number(b.dataset.overlayStep);this.load()});this.bindPlots();
  }
  bindPlots(){
   const plots=[...this.content.querySelectorAll('.zoom-plot')];

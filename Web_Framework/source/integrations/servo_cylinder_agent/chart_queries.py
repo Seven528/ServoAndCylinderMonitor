@@ -79,3 +79,23 @@ def read_charts(db,family,asset,start,end,metrics,width):
         total=totals[i]
         result.append({'key':column,'label':label,'points':series[i],'statistics':{'count':total['count'],'min':total['min'],'max':total['max'],'mean':total['sum']/total['count']}})
     return result
+
+
+def read_overlays(db, family, asset, start, end, metrics, page=0):
+    # Paged complete cycles aligned in elapsed seconds.
+    where='family=? AND asset=? AND complete=1 AND start>=? AND end<=?'
+    args=(family,asset,start,end)
+    total=db.execute('SELECT COUNT(*) FROM cycles WHERE '+where,args).fetchone()[0]
+    page=max(0,min(int(page),max(0,(total-1)//200)))
+    cycles=db.execute('SELECT cid,start,end FROM cycles WHERE '+where+' ORDER BY start LIMIT 200 OFFSET ?',(*args,page*200)).fetchall()
+    asset_num=db.execute('SELECT asset_num FROM wave_assets WHERE asset=?',(asset,)).fetchone()[0]
+    result={key:[] for key in metrics}
+    for cid,a,b in cycles:
+        width=max((b-a)/160,.000001)
+        fields=','.join('AVG(s.'+k+'),MIN(s.'+k+'),MAX(s.'+k+')' for k in metrics)
+        rows=db.execute('SELECT MIN(159,CAST((s.ts-?)/? AS INTEGER)) bucket,AVG(s.ts),'+fields+''' FROM wave_rows w INDEXED BY wave_cycle
+            JOIN samples s ON s.id=w.sample_id WHERE w.family=? AND w.asset=? AND w.cid=? GROUP BY bucket ORDER BY bucket''',(a,width,family,asset_num,cid)).fetchall()
+        for i,key in enumerate(metrics):
+            points=[{'time':r[1]-a,'mean':r[2+i*3],'min':r[3+i*3],'max':r[4+i*3]} for r in rows if r[2+i*3] is not None]
+            if points:result[key].append({'cid':cid,'start':a,'duration':b-a,'points':points})
+    return {'total':total,'page':page,'pages':(total+199)//200,'cycles':result}

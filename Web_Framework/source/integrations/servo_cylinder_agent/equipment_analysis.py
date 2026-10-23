@@ -46,28 +46,29 @@ def prepare_equipment(engine):
                 db.execute('INSERT INTO equipment_parameters VALUES(?,?,?,?,?)',(asset,*cached))
             gap_limit,execute_n,still_n,vmax=cached
             threshold=max(1e-8,(vmax or 0)*.02)
-            boundary='EXEUTE/EXECUTE 上升沿' if execute_n==2 else 'STANDSTILL 下降沿' if still_n==2 else '|ACTVEL| 运动阈值上升沿' if vmax and vmax>0 else '未识别周期'
-            if family=='cylinder':
-                distinct=db.execute('SELECT COUNT(*) FROM (SELECT DISTINCT MOVEMENTCOUNTER FROM samples WHERE asset=? AND MOVEMENTCOUNTER IS NOT NULL LIMIT 2)',(asset,)).fetchone()[0]
-                boundary='MOVEMENTCOUNTER 递增（周期代理）' if distinct==2 else '未识别周期'
-            cursor=db.execute('SELECT id,ts,execute,standstill,ACTVEL,MOVEMENTCOUNTER FROM samples WHERE asset=? AND ts IS NOT NULL AND ('+condition+') ORDER BY ts,id',(asset,))
-            cid=0;seen_start=False;previous=None;start=None;last=None;length=0;buffer=[]
-            for rid,ts,execute,still,vel,counter in cursor:
-                active=bool(execute) if execute_n==2 else still==0 if still_n==2 else abs(vel or 0)>threshold
+            from .product_cycles import motion_rows, settings
+            source,idle_seconds,idle_method=settings(db,asset,threshold,gap_limit,progress)
+            boundary=f'候选产品周期：{source} 长静止后动作起点 → 下一起点；静止阈值 {idle_seconds:.3f} 秒；{idle_method}；未经产品信号验证'
+            cid=0;seen_start=False;previous=None;start=None;last=None;length=0;buffer=[];quiet=None
+            for rid,ts,vel,active in motion_rows(db,asset,threshold,source):
                 reset=previous is not None and ts-previous[0]>gap_limit
-                counter_reset=family=='cylinder' and previous is not None and counter is not None and previous[3] is not None and counter<previous[3]
-                rise=previous is not None and ((counter is not None and previous[3] is not None and counter>previous[3]) if family=='cylinder' else active and not previous[1])
-                if start is not None and (rise or reset or counter_reset):
-                    complete=seen_start and rise and not reset and not counter_reset
-                    if family=='cylinder' and counter is not None and previous[3] is not None and counter-previous[3]!=1:complete=False
+                # Missing motion evidence breaks confidence; no boundary is inferred
+                # through a missing block. Waiting is retained in the prior cycle.
+                unknown=active is None
+                if reset or unknown:quiet=None
+                rise=bool(active and quiet is not None and ts-quiet>=idle_seconds and not reset)
+                if start is not None and (rise or reset or unknown):
+                    complete=seen_start and rise and not reset and not unknown
                     db.execute('INSERT INTO cycles(family,asset,cid,start,end,n,complete,boundary,duration) VALUES(?,?,?,?,?,?,?,?,?)',(family,asset,cid,start,ts if complete else last,length,int(complete),boundary,(ts if complete else last)-start))
-                    cid+=1;length=0;start=None;seen_start=rise and not reset and not counter_reset
+                    cid+=1;length=0;start=None;seen_start=rise and not reset and not unknown
                 if start is None:start=ts
-                acceleration=(abs(vel)-abs(previous[2]))/(ts-previous[0]) if previous and vel is not None and previous[2] is not None and ts>previous[0] and not reset and not rise else None
+                if active:quiet=None
+                elif not unknown and quiet is None:quiet=ts
+                acceleration=(abs(vel)-abs(previous[1]))/(ts-previous[0]) if previous and vel is not None and previous[1] is not None and ts>previous[0] and not reset and not rise else None
                 buffer.append((family,asset_num,rid,cid,acceleration));length+=1;last=ts
                 if len(buffer)>=10000:
-                    db.executemany('INSERT INTO wave_rows VALUES(?,?,?,?,?)',buffer);buffer=[];progress(f'周期读取：{asset} · 已识别 {cid:,} 个边界')
-                previous=(ts,active,vel,counter)
+                    db.executemany('INSERT INTO wave_rows VALUES(?,?,?,?,?)',buffer);buffer=[];progress(f'产品周期读取：{asset} · 已识别 {cid:,} 个分段')
+                previous=(ts,vel)
             db.executemany('INSERT INTO wave_rows VALUES(?,?,?,?,?)',buffer)
             if start is not None:db.execute('INSERT INTO cycles(family,asset,cid,start,end,n,complete,boundary,duration) VALUES(?,?,?,?,?,?,?,?,?)',(family,asset,cid,start,last,length,0,boundary,last-start))
             db.commit()
@@ -78,10 +79,12 @@ def prepare_equipment(engine):
         vmax=db.execute('SELECT vmax FROM equipment_parameters WHERE asset=?',(asset,)).fetchone()[0]
         compute_features(db,family,asset,max(1e-8,(vmax or 0)*.02),progress)
         info=model_cycles(db,family,asset,progress)
+        source,idle,method=db.execute('SELECT source,idle,method FROM product_settings WHERE asset=?',(asset,)).fetchone()
+        info['product_cycle']={'kind':'candidate','idle_seconds':idle,'source':source,'threshold_method':method,'definition':'当前产品动作组开始到下一动作组开始，包含运行、保持、等待及返回；无产品启动/ID标签，尚未确认一组对应一个产品。'}
         info['boundary']=db.execute('SELECT boundary FROM cycles WHERE family=? AND asset=? LIMIT 1',(family,asset)).fetchone()[0]
         db.execute('INSERT INTO equipment_models VALUES(?,?,?)',(family,asset,json.dumps(info,ensure_ascii=False,allow_nan=False)))
         db.commit()
-    return {'version':1,'servo':catalog(db,'servo'),'cylinder':catalog(db,'cylinder'),'method':'按资产分别分周期；不完整边界周期不训练；IsolationForest 和 HMM 训练使用明确披露的有界样本，全部有效周期推断。'}
+    return {'version':2,'servo':catalog(db,'servo'),'cylinder':catalog(db,'cylinder'),'method':'同资产伺服与气缸共用候选产品边界；不完整边界周期不训练；IsolationForest 和 HMM 训练使用明确披露的有界样本，全部有效周期推断。'}
 
 
 def catalog(db,family,query=''):
@@ -135,8 +138,9 @@ def query_view(run_id,options):
         metrics=SERVO if family=='servo' else CYLINDER
         if options.get('view')=='diagnostic':metrics={}
         elif options.get('view')=='lifecycle':metrics={key:value for key,value in metrics.items() if key in ('ACTTORQUE','ACTVEL','MOVETOWORKTIME_MS','MOVETOTBASTIME_MS')}
-        from .chart_queries import read_charts
+        from .chart_queries import read_charts, read_overlays
         charts=read_charts(db,family,asset,start,end,metrics,width)
+        overlays=read_overlays(db,family,asset,start,end,metrics,options.get('overlay_page',0)) if options.get('view')=='overview' else None
         count=db.execute('SELECT COUNT(*) FROM cycles WHERE family=? AND asset=? AND end>=? AND start<=?',(family,asset,start,end)).fetchone()[0]
         bands=[]
         if count<=1000:
@@ -147,4 +151,4 @@ def query_view(run_id,options):
         rows=db.execute('SELECT MIN(499,CAST((start-?)/? AS INTEGER)) b,AVG(start),'+','.join(('MAX' if f=='if_score' else 'AVG')+'('+f+')' for f in features)+',MAX(stage),SUM(if_anomaly),COUNT(*),SUM(stage=0),SUM(stage=1),SUM(stage=2),MIN(cid),MAX(cid) FROM cycles WHERE family=? AND asset=? AND complete=1 AND start>=? AND start<=? GROUP BY b ORDER BY b',(start,width,family,asset,start,end)).fetchall()
         models=[dict(zip(['bucket','time',*features,'stage','anomalies','cycles','stage0','stage1','stage2','first_cid','last_cid'],row)) for row in rows]
         scope=db.execute('SELECT COUNT(*),SUM(complete),SUM(CASE WHEN complete=1 THEN if_anomaly END),AVG(CASE WHEN complete=1 THEN mean_di END),SUM(CASE WHEN complete=1 THEN stage=2 END),COUNT(CASE WHEN complete=1 THEN stage END),COUNT(CASE WHEN complete=1 THEN mean_di END) FROM cycles WHERE family=? AND asset=? AND start>=? AND start<=?',(family,asset,start,end)).fetchone()
-        return {'family':family,'asset':asset,'start':start,'end':end,'full_start':full[0],'full_end':full[1],'charts':charts,'bands':bands,'cycle_count':count,'dense_cycles':count>1000,'models':models,'model_info':json.loads(info[0]),'scope':dict(zip(['cycles','complete_cycles','if_anomalies','mean_degradation','high_risk_cycles','hmm_cycles','degradation_cycles'],scope)),'resolution_seconds':width,'statistics':'所选区间全部记录参与精确分位数统计；图点为时间桶，缩放后重新聚合。模型固定于本次完整分析，缩放不重新拟合。'}
+        return {'overlays':overlays,'family':family,'asset':asset,'start':start,'end':end,'full_start':full[0],'full_end':full[1],'charts':charts,'bands':bands,'cycle_count':count,'dense_cycles':count>1000,'models':models,'model_info':json.loads(info[0]),'scope':dict(zip(['cycles','complete_cycles','if_anomalies','mean_degradation','high_risk_cycles','hmm_cycles','degradation_cycles'],scope)),'resolution_seconds':width,'statistics':'所选区间全部记录参与精确分位数统计；图点为时间桶，缩放后重新聚合。模型固定于本次完整分析，缩放不重新拟合。'}

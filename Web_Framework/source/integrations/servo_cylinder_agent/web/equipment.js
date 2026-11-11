@@ -3,7 +3,7 @@ const esc=v=>String(v??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>'
 const num=(v,d=2)=>v==null||!Number.isFinite(Number(v))?'—':Number(v).toLocaleString('zh-CN',{maximumFractionDigits:d});
 const date=t=>new Date(t*1000).toLocaleString('zh-CN',{hour12:false});
 const local=t=>{const d=new Date(t*1000);return new Date(d-d.getTimezoneOffset()*60000).toISOString().slice(0,23)};
-const seriesNames={median:'中位数',mean:'均值',p95:'P95',p05:'P05',min:'最小值',max:'最大值',std:'标准差',if_score:'IsolationForest 异常分数',mean_di:'平均退化指数',torque_di:'转矩退化指数',velocity_di:'速度退化指数',stage:'HMM 阶段',torque_amplitude:'转矩幅度 P95−P05',velocity_instability:'速度不稳定度 CV',work_time:'工作行程 ms',base_time:'回程 ms'};
+const seriesNames={median:'中位数',mean:'均值',p95:'P95',p05:'P05',min:'最小值',max:'最大值',std:'标准差',if_score:'IsolationForest 异常分数',mean_di:'平均退化指数',torque_di:'转矩退化指数',velocity_di:'速度退化指数',stage:'HMM 阶段',torque_amplitude:'转矩幅度 P95−P05',velocity_instability:'速度不稳定度 CV',work_time:'工作行程 ms',base_time:'回程 ms',counter:'累计动作（右轴）'};
 const colors=['#007bc0','#006c3a','#9e2896','#c06000','#355c7d','#525f6b','#827200'];
 const familyNames={servo:'伺服',cylinder:'气缸'};
 const controllers=[];
@@ -16,23 +16,27 @@ function loadView(api,path,body){
  return promise;
 }
 
-function svgPlot(title,points,keys,data,{risk=false,threshold=false,stage=false,anomaly=false}={}){
-  const W=860,H=230,L=68,R=18,T=16,B=42,PW=W-L-R,PH=H-T-B;
-  const values=points.flatMap(p=>keys.map(k=>p[k])).filter(v=>v!=null&&Number.isFinite(v));
+function svgPlot(title,points,keys,data,{risk=false,threshold=false,stage=false,anomaly=false,joint=false}={}){
+  const W=860,H=230,L=68,R=joint?95:18,T=16,B=42,PW=W-L-R,PH=H-T-B;
+  const values=points.flatMap(p=>keys.filter(k=>!joint||k!=='counter').map(k=>p[k])).filter(v=>v!=null&&Number.isFinite(v));
   if(!values.length)return `<article class="wave-chart"><h4>${esc(title)}</h4><p class="muted">所选区间没有可计算数据。</p></article>`;
   let low=stage?0:Math.min(...values),high=stage?2:Math.max(...values);
   if(threshold){low=Math.min(low,0);high=Math.max(high,0)}
   let span=high-low||Math.max(1,Math.abs(low)*.1);if(!stage){low-=span*.08;high+=span*.08;span=high-low}
   const x=t=>L+(t-data.start)/Math.max(.000001,data.end-data.start)*PW;
   const y=v=>T+(high-v)/(high-low||1)*PH;
+  const counters=points.map(p=>p.counter).filter(v=>v!=null&&Number.isFinite(v)),clow=counters.length?Math.min(...counters):0,chigh=counters.length?Math.max(...counters):1;
+  const cy=v=>T+(chigh-v)/(chigh-clow||1)*PH;
+  const jointAxis=joint?[0,.5,1].map(r=>`<text x="${W-R+8}" y="${T+r*PH+4}">${num(chigh-r*(chigh-clow),0)}</text>`).join(''):'';
+  const eventMarks=joint?(data.cylinder_events?.markers||[]).map(m=>`<line x1="${x(m.time)}" x2="${x(m.time)}" y1="${T}" y2="${T+PH}" stroke="${m.invalid?'#ed0007':'#007bc0'}" opacity=".18"><title>${m.count}个计数事件，${m.invalid}个跳变/复位/断档；时间桶聚合</title></line>`).join(''):'';
   const bands=data.bands.map(b=>{const a=Math.max(L,x(b.start)),end=Math.min(W-R,x(b.end));if(end<a)return '';return `<rect x="${a}" y="${T}" width="${Math.max(.5,end-a)}" height="${PH}" fill="${b.cid%2?'#d8edfa':'#fff'}"><title>周期 ${b.cid} · ${b.complete?'完整':'边界不完整'} · ${esc(date(b.start))} — ${esc(date(b.end))}</title></rect>`}).join('');
   const red=risk?data.bands.filter(b=>b.stage===2).map(b=>`<rect class="risk-band" x="${Math.max(L,x(b.start))}" y="${T}" width="${Math.max(.5,Math.min(W-R,x(b.end))-Math.max(L,x(b.start)))}" height="${PH}" fill="#ed0007" opacity=".16"><title>危险区域：HMM 阶段 2 · 周期 ${b.cid}（次品关联未验证）</title></rect>`).join(''):'';
   const grid=[0,.5,1].map(r=>`<line x1="${L}" x2="${W-R}" y1="${T+r*PH}" y2="${T+r*PH}" stroke="#dde4e8"/><text x="${L-8}" y="${T+r*PH+4}" text-anchor="end">${num(high-r*(high-low),3)}</text>`).join('');
-  const paths=keys.map((k,index)=>{let path='',prior=null;for(const p of points){const v=p[k];if(v==null||!Number.isFinite(v)){prior=null;continue}const gap=prior!=null&&(p.first_cid!=null?p.first_cid>prior.last_cid+1:p.time-prior.time>data.resolution_seconds*2.1);path+=prior==null||gap?`M${x(p.time).toFixed(2)},${y(v).toFixed(2)} `:stage?`H${x(p.time).toFixed(2)} V${y(v).toFixed(2)} `:`L${x(p.time).toFixed(2)},${y(v).toFixed(2)} `;prior=p}return `<path d="${path}" fill="none" stroke="${colors[index%colors.length]}" stroke-width="${index?1.5:2}" ${index>1?'stroke-dasharray="4 3"':''}/>`}).join('');
+  const paths=keys.map((k,index)=>{let path='',prior=null;for(const p of points){const v=p[k],py=joint&&k==='counter'?cy:y;if(v==null||!Number.isFinite(v)){prior=null;continue}const gap=prior!=null&&(p.first_cid!=null?p.first_cid>prior.last_cid+1:p.time-prior.time>data.resolution_seconds*2.1);path+=prior==null||gap?`M${x(p.time).toFixed(2)},${py(v).toFixed(2)} `:stage?`H${x(p.time).toFixed(2)} V${py(v).toFixed(2)} `:`L${x(p.time).toFixed(2)},${py(v).toFixed(2)} `;prior=p}return `<path d="${path}" fill="none" stroke="${colors[index%colors.length]}" stroke-width="${index?1.5:2}" ${index>1?'stroke-dasharray="4 3"':''}/>`}).join('');
   const marks=anomaly?points.filter(p=>p.anomalies>0&&p.if_score!=null).map(p=>`<circle cx="${x(p.time)}" cy="${y(p.if_score)}" r="3" fill="#ed0007"><title>此时间桶 ${p.anomalies} 个异常 / ${p.cycles} 个完整周期</title></circle>`).join(''):'';
   const zero=threshold?`<line x1="${L}" x2="${W-R}" y1="${y(0)}" y2="${y(0)}" stroke="#ed0007" stroke-dasharray="5 3"/>`:'';
   const labels=[0,.5,1].map(r=>`<text x="${L+r*PW}" y="${H-12}" text-anchor="${r===0?'start':r===1?'end':'middle'}">${esc(date(data.start+r*(data.end-data.start)))}</text>`).join('');
-  return `<article class="wave-chart"><h4>${esc(title)}</h4><svg class="zoom-plot" viewBox="0 0 ${W} ${H}" tabindex="0" role="img" aria-label="${esc(title)}。拖动选择时间范围，双击恢复全部。" data-left="${L/W}" data-right="${(W-R)/W}"><rect x="${L}" y="${T}" width="${PW}" height="${PH}" fill="#f7f9fa"/>${bands}${red}${grid}${zero}${paths}${marks}${labels}<rect class="brush-selection" y="${T}" height="${PH}" fill="#007bc0" opacity=".18" hidden/></svg><div class="chart-legend">${keys.map((k,i)=>`<span><i class="legend-dot" style="background:${colors[i%colors.length]}"></i>${esc(seriesNames[k]||k)}</span>`).join('')}${threshold?'<span class="danger-text">红点：桶内有异常周期；红虚线：分数 0 阈值</span>':''}${risk?'<span class="danger-text">红色半透明：阶段 2 危险区域（模型筛查）</span>':''}</div><output class="wave-tooltip">悬停查看数值；拖动框选时间，双击恢复全部。</output></article>`;
+  return `<article class="wave-chart"><h4>${esc(title)}</h4><svg class="zoom-plot" viewBox="0 0 ${W} ${H}" tabindex="0" role="img" aria-label="${esc(title)}。拖动选择时间范围，双击恢复全部。" data-joint="${joint}" data-left="${L/W}" data-right="${(W-R)/W}"><rect x="${L}" y="${T}" width="${PW}" height="${PH}" fill="#f7f9fa"/>${bands}${red}${grid}${zero}${eventMarks}${paths}${marks}${labels}${jointAxis}<rect class="brush-selection" y="${T}" height="${PH}" fill="#007bc0" opacity=".18" hidden/></svg><div class="chart-legend">${keys.map((k,i)=>`<span><i class="legend-dot" style="background:${colors[i%colors.length]}"></i>${esc(seriesNames[k]||k)}</span>`).join('')}${threshold?'<span class="danger-text">红点：桶内有异常周期；红虚线：分数 0 阈值</span>':''}${risk?'<span class="danger-text">红色半透明：阶段 2 危险区域（模型筛查）</span>':''}</div><output class="wave-tooltip">悬停查看数值；拖动框选时间，双击恢复全部。</output></article>`;
 }
 
 function overlayPlot(chart,overlay){
@@ -42,9 +46,9 @@ function overlayPlot(chart,overlay){
  for(const c of cycles){end=Math.max(end,c.duration);for(const p of c.points){low=Math.min(low,p.min);high=Math.max(high,p.max)}}
  const pad=(high-low||1)*.08;low-=pad;high+=pad;
  const x=t=>L+t/Math.max(end,.000001)*(W-L-R),y=v=>T+(high-v)/(high-low)*(H-T-B);
- const paths=cycles.map((c,i)=>{let prior=null,line='',envelope='';for(const p of c.points){const gap=prior==null||p.time-prior.time>c.duration/160*2.1;line+=`${gap?'M':'L'}${x(p.time)},${y(p.mean)} `;envelope+=`M${x(p.time)},${y(p.min)} L${x(p.time)},${y(p.max)} `;prior=p}const color=colors[i%colors.length];return `<g><title>周期 ${c.cid} · ${esc(date(c.start))} · 时长 ${num(c.duration,3)} 秒</title><path d="${envelope}" stroke="${color}" opacity=".12"/><path d="${line}" stroke="${color}" opacity=".55" fill="none" stroke-width="1.2"/></g>`}).join('');
+ const paths=cycles.map((c,i)=>{let prior=null,line='',envelope='';for(const p of c.points){const gap=prior==null||p.time-prior.time>c.duration/160*2.1;line+=`${gap?'M':'L'}${x(p.time)},${y(p.mean)} `;envelope+=`M${x(p.time)},${y(p.min)} L${x(p.time)},${y(p.max)} `;prior=p}const color=colors[i%colors.length];return `<g><title>周期 ${c.cid} · ${esc(date(c.start))} · 候选有效时长 ${num(c.duration,3)} 秒</title><path d="${envelope}" stroke="${color}" opacity=".12"/><path d="${line}" stroke="${color}" opacity=".55" fill="none" stroke-width="1.2"/></g>`}).join('');
  const ticks=[0,.5,1].map(r=>`<line x1="${L}" x2="${W-R}" y1="${T+r*(H-T-B)}" y2="${T+r*(H-T-B)}" stroke="#dde4e8"/><text x="${L-8}" y="${T+r*(H-T-B)+4}" text-anchor="end">${num(high-r*(high-low),3)}</text><text x="${x(r*end)}" y="${H-28}" text-anchor="${r===0?'start':r===1?'end':'middle'}">${num(r*end,3)} s</text>`).join('');
- return `<article class="wave-chart"><h4>${esc(chart.label)} · 周期叠加</h4><svg class="overlay-plot" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(chart.label)}周期叠加图"><rect x="${L}" y="${T}" width="${W-L-R}" height="${H-T-B}" fill="#f7f9fa"/>${ticks}${paths}<text x="${(W+L-R)/2}" y="${H-5}" text-anchor="middle">周期内经过时间（秒）</text></svg><p class="method-copy">${cycles.length} 条周期曲线；按起点对齐，保留真实时长，不拉伸。线为周期内时间桶均值，淡色竖线保留桶内最小—最大值；每周期最多 160 桶。悬停曲线查看周期编号、起点和时长。颜色仅区分曲线。</p></article>`;
+ return `<article class="wave-chart"><h4>${esc(chart.label)} · 周期叠加</h4><svg class="overlay-plot" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(chart.label)}周期叠加图"><rect x="${L}" y="${T}" width="${W-L-R}" height="${H-T-B}" fill="#f7f9fa"/>${ticks}${paths}<text x="${(W+L-R)/2}" y="${H-5}" text-anchor="middle">伺服候选周期内经过时间（秒）</text></svg><p class="method-copy">${cycles.length} 条伺服候选周期曲线；横轴终点是本批最长周期，并非所有周期时长；按起点对齐，保留真实时长，不拉伸。线为周期内时间桶均值，淡色竖线保留桶内最小—最大值；每周期最多 160 桶。悬停曲线查看周期编号、起点和时长。颜色仅区分曲线。</p></article>`;
 }
 
 function metrics(view,mode){
@@ -90,8 +94,17 @@ class EquipmentView {
   html+=`<p class="method-copy">${esc(v.statistics)} P05/P95 描述分布两端；标准差表示桶内离散程度，不是置信区间。首尾不完整周期仍展示波形，不进入周期模型。</p>`;
   html+=`<p class="method-copy">${esc(info.product_cycle?.definition||'请重新运行分析更新工艺口径。')} 静止阈值 ${num(info.product_cycle?.idle_seconds,3)} 秒。${esc(info.product_cycle?.note||'')} 平坦段有数值代表持续采样。叠加图仅包含首尾均在当前区间内的完整周期（${num(v.overlays?.total,0)} 个），与上方“完整周期”起点统计口径不同。</p>`;
   if(v.overlays?.pages>1)html+=`<div class="overlay-pager"><button data-overlay-step="-1" ${v.overlays.page===0?'disabled':''}>上一批周期</button> 第 ${v.overlays.page+1} / ${v.overlays.pages} 批，每批最多 200 个，按时间顺序 <button data-overlay-step="1" ${v.overlays.page+1>=v.overlays.pages?'disabled':''}>下一批周期</button></div>`;
-  if(v.cylinder_events){const e=v.cylinder_events;html+=`<h4>气缸独立动作事件</h4><p>计数变化 ${num(e.count,0)} 次，其中单次递增 ${num(e.unit_increments,0)} 次。不能据此确认到位、停留或完整周期；基本位等待不计入行程时间。1秒仅为专家参考，不填作实测值。</p><div class="table-wrap"><table><thead><tr><th>事件时间</th><th>计数变化</th><th>去工作位行程 ms</th><th>回基本位行程 ms</th><th>质量</th></tr></thead><tbody>${e.preview.map(p=>`<tr><td>${esc(date(p.time))}</td><td>${num(p.delta,0)}</td><td>${num(p.work_ms,3)}</td><td>${num(p.base_ms,3)}</td><td>${esc(p.quality)}</td></tr>`).join('')}</tbody></table></div><p class="method-copy">表格仅预览最新100个事件；时间为计数变化被采样的时刻，行程时间为该行报告值，是否对应同一去回动作需PLC确认。</p>`}
-  html+=v.charts.map(c=>`<div class="wave-pair">${svgPlot(c.label+' · 时间趋势',c.points,this.keys,v)}${v.cylinder_events?'<article class="wave-chart"><h4>气缸有效周期</h4><p>当前只有计数和行程参数，没有到位时序；不绘制虚构的工作位停留波形。请补充工作位到位、基本位到位或换向指令。</p></article>':overlayPlot(c,v.overlays)}</div>`).join('');
+  if(v.cylinder_events){const e=v.cylinder_events;html+=`<details class="details"><summary>气缸独立动作数据（点击展开）</summary><h4>气缸独立动作事件</h4><p>计数变化 ${num(e.count,0)} 次，其中单次递增 ${num(e.unit_increments,0)} 次。不能据此确认到位、停留或完整周期；基本位等待不计入行程时间。1秒仅为专家参考，不填作实测值。</p><div class="table-wrap"><table><thead><tr><th>事件时间</th><th>计数变化</th><th>去工作位行程 ms</th><th>回基本位行程 ms</th><th>质量</th></tr></thead><tbody>${e.preview.map(p=>`<tr><td>${esc(date(p.time))}</td><td>${num(p.delta,0)}</td><td>${num(p.work_ms,3)}</td><td>${num(p.base_ms,3)}</td><td>${esc(p.quality)}</td></tr>`).join('')}</tbody></table></div><p class="method-copy">表格仅预览最新100个事件；时间为计数变化被采样的时刻，行程时间为该行报告值，是否对应同一去回动作需PLC确认。</p></details>`}
+  if(v.cylinder_events){
+   const byTime=new Map();for(const c of v.charts){const key=({MOVETOWORKTIME_MS:'work_time',MOVETOTBASTIME_MS:'base_time',MOVEMENTCOUNTER:'counter'})[c.key];if(!key)continue;for(const p of c.points){if(!byTime.has(p.time))byTime.set(p.time,{time:p.time});byTime.get(p.time)[key]=key==='counter'?p.max:p.median}}
+   this.jointPoints=[...byTime.values()].sort((a,b)=>a.time-b.time);
+   const keys=['work_time','base_time','counter'].filter(k=>this.jointPoints.some(p=>p[k]!=null));
+   html+=`<div class="joint-chart">${svgPlot('气缸联合趋势 · 行程时间（左轴 ms）/累计动作（右轴）',this.jointPoints,keys,v,{joint:true})}</div>`;
+   const t=v.cylinder_events.intervals;
+   if(t)html+=`<p class="method-copy">有效相邻事件间隔 ${num(t.count,0)} 个；中位数 ${num(t.median,3)} 秒，均值 ${num(t.mean,3)} 秒，最小 ${num(t.min,3)} 秒，最大 ${num(t.max,3)} 秒。统计只使用相邻有效单次计数事件，不跨复位、跳变或采样断档；间隔包含基本位等待，是动作节奏代理，不是有效动作时长或工作位停留时间。</p>`;
+   html+='<p class="method-copy">左轴显示行程时间桶中位数，右轴显示累计计数桶最大值。蓝色竖线为计数变化所在时间桶，红色为含无效变化的桶；放大可查看局部事件。行程参数可能在多次采样中保持，参数变化不等于一次新动作。</p>';
+  }else html+=v.charts.map(c=>`<div class="wave-pair">${svgPlot(c.label+' · 时间趋势',c.points,this.keys,v)}${overlayPlot(c,v.overlays)}</div>`).join('');
+
   html+=`<details class="details"><summary>所选时间范围描述统计</summary><div class="table-wrap"><table><thead><tr><th>信号</th><th>有效记录</th><th>均值</th><th>最小值</th><th>最大值</th></tr></thead><tbody>${v.charts.map(c=>`<tr><td>${esc(c.label)}</td>${['count','mean','min','max'].map(k=>`<td>${num(c.statistics[k],k==='count'?0:3)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
  } else if(mode==='diagnostic'){
   const m=info.isolation_forest;
@@ -130,8 +143,8 @@ class EquipmentView {
   plots.forEach(svg=>{let down=null;const fraction=e=>{const rect=svg.getBoundingClientRect();const f=(e.clientX-rect.left)/rect.width;return Math.max(0,Math.min(1,(f-Number(svg.dataset.left))/(Number(svg.dataset.right)-Number(svg.dataset.left))))};
    svg.onpointerdown=e=>{if(e.button!==0)return;down=fraction(e);svg.setPointerCapture(e.pointerId)};
    svg.onpointermove=e=>{const f=fraction(e),tooltip=svg.closest('article').querySelector('output');
-    if(down!=null){const rect=svg.querySelector('.brush-selection');rect.removeAttribute('hidden');rect.setAttribute('x',68+Math.min(down,f)*774);rect.setAttribute('width',Math.abs(f-down)*774);return}
-    const target=this.range[0]+f*(this.range[1]-this.range[0]);const chart=this.view.charts.find(c=>svg.getAttribute('aria-label').startsWith(c.label));const points=chart?.points||this.view.models;let nearest=null;for(const p of points)if(!nearest||Math.abs(p.time-target)<Math.abs(nearest.time-target))nearest=p;if(nearest){const keys=chart?this.keys:Object.keys(seriesNames).filter(k=>nearest[k]!=null);tooltip.textContent=`${date(nearest.time)} · ${keys.filter(k=>nearest[k]!=null).map(k=>`${seriesNames[k]||k} ${num(nearest[k],4)}`).join(' · ')}${nearest.count!=null?' · n='+nearest.count:''}`}
+    if(down!=null){const rect=svg.querySelector('.brush-selection');rect.removeAttribute('hidden');rect.setAttribute('x',68+Math.min(down,f)*(svg.dataset.joint==='true'?697:774));rect.setAttribute('width',Math.abs(f-down)*(svg.dataset.joint==='true'?697:774));return}
+    const target=this.range[0]+f*(this.range[1]-this.range[0]);const isJoint=svg.dataset.joint==='true';const chart=isJoint?null:this.view.charts.find(c=>svg.getAttribute('aria-label').startsWith(c.label));const points=isJoint?this.jointPoints:chart?.points||this.view.models;let nearest=null;for(const p of points)if(!nearest||Math.abs(p.time-target)<Math.abs(nearest.time-target))nearest=p;if(nearest){const keys=isJoint?['work_time','base_time','counter']:chart?this.keys:Object.keys(seriesNames).filter(k=>nearest[k]!=null);tooltip.textContent=`${date(nearest.time)} · ${keys.filter(k=>nearest[k]!=null).map(k=>`${seriesNames[k]||k} ${num(nearest[k],4)}`).join(' · ')}${nearest.count!=null?' · n='+nearest.count:''}`}
    };
    svg.onpointerup=e=>{if(down==null)return;const end=fraction(e),a=down;down=null;svg.querySelector('.brush-selection').setAttribute('hidden','');if(Math.abs(end-a)>.01){const [s,t]=this.range;this.range=[s+Math.min(a,end)*(t-s),s+Math.max(a,end)*(t-s)];this.load()}};
    svg.onpointercancel=()=>{down=null;svg.querySelector('.brush-selection').setAttribute('hidden','')};

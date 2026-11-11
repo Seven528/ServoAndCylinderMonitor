@@ -5,19 +5,21 @@ from .product_cycles import motion_rows, settings
 def build(db,family,asset,asset_num,threshold,gap_limit,progress):
     if family=='cylinder':
         db.execute('CREATE TABLE IF NOT EXISTS cylinder_events(asset TEXT,sample_id INTEGER,ts REAL,delta REAL,work_ms REAL,base_ms REAL,quality TEXT)')
-        rows=[];mapping=[];prev=None;first=None;last=None;n=0
+        rows=[];mapping=[];prev=None;first=None;last=None;n=0;interrupted=False
         for rid,ts,counter,work,base in db.execute('SELECT id,ts,MOVEMENTCOUNTER,MOVETOWORKTIME_MS,MOVETOTBASTIME_MS FROM samples WHERE asset=? AND ts IS NOT NULL ORDER BY ts,id',(asset,)):
             if first is None:first=ts
+            if prev is not None and ts-prev[0]>gap_limit:interrupted=True
             if prev is not None and counter is not None and prev[1] is not None and counter!=prev[1]:
                 delta=counter-prev[1]
-                quality='单次递增事件（完成语义待PLC确认）' if delta==1 and ts-prev[0]<=gap_limit else '跳变/复位/断档，不代表单次完整动作'
-                rows.append((asset,rid,ts,delta,work,base,quality))
+                quality='单次递增事件（完成语义待PLC确认）' if delta==1 and not interrupted and ts-prev[0]<=gap_limit else '跳变/复位/断档，不代表单次完整动作'
+                rows.append((asset,rid,ts,delta,work,base,quality));interrupted=False
             mapping.append((family,asset_num,rid,0,None));n+=1;last=ts;prev=(ts,counter)
             if len(mapping)>=10000:
                 db.executemany('INSERT INTO wave_rows VALUES(?,?,?,?,?)',mapping);mapping=[]
                 db.executemany('INSERT INTO cylinder_events VALUES(?,?,?,?,?,?,?)',rows);rows=[];progress(f'气缸事件读取：{asset} · {n:,} 条')
         db.executemany('INSERT INTO wave_rows VALUES(?,?,?,?,?)',mapping)
         db.executemany('INSERT INTO cylinder_events VALUES(?,?,?,?,?,?,?)',rows)
+        db.execute('CREATE INDEX IF NOT EXISTS cylinder_event_time ON cylinder_events(asset,ts,sample_id)')
         boundary='气缸独立动作事件；缺少工作位/基本位到位信号，无法重建含工作位停留的有效周期'
         if first is not None:db.execute('INSERT INTO cycles(family,asset,cid,start,end,n,complete,boundary,duration) VALUES(?,?,?,?,?,?,?,?,?)',(family,asset,0,first,last,n,0,boundary,None))
         return {'kind':'events_only','source':'MOVEMENTCOUNTER','idle_seconds':None,'velocity_threshold':None,'definition':boundary,'nominal_work_dwell_seconds':1,'note':'1秒仅为专家参考，不填入实测结果；去/回行程时间不等于工作位停留时间。'}

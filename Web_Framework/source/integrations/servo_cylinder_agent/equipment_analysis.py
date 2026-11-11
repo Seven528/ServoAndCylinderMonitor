@@ -134,6 +134,13 @@ def query_view(run_id,options):
             total,unit=db.execute('SELECT COUNT(*),SUM(delta=1) FROM cylinder_events WHERE asset=? AND ts>=? AND ts<=?',(asset,start,end)).fetchone()
             events=[dict(zip(['time','delta','work_ms','base_ms','quality'],r)) for r in db.execute('SELECT ts,delta,work_ms,base_ms,quality FROM cylinder_events WHERE asset=? AND ts>=? AND ts<=? ORDER BY ts DESC LIMIT 100',(asset,start,end))]
             event_summary={'count':total,'unit_increments':unit or 0,'preview':events}
+            interval_source="""WITH e AS (SELECT ts,delta,quality,LAG(ts) OVER(ORDER BY ts,sample_id) prior,LAG(quality) OVER(ORDER BY ts,sample_id) prior_quality FROM cylinder_events WHERE asset=?) SELECT ts-prior dt FROM e WHERE ts>=? AND ts<=? AND prior>=? AND ts>prior AND quality LIKE '单次递增%' AND prior_quality LIKE '单次递增%'"""
+            args=(asset,start,end,start)
+            n,minimum,maximum,mean=db.execute('SELECT COUNT(*),MIN(dt),MAX(dt),AVG(dt) FROM ('+interval_source+')',args).fetchone()
+            middle=db.execute('SELECT dt FROM ('+interval_source+') ORDER BY dt LIMIT 2 OFFSET ?',(*args,max(0,(n-1)//2))).fetchall() if n else []
+            event_summary['intervals']={'count':n,'min':minimum,'max':maximum,'mean':mean,'median':(middle[0][0]+middle[-1][0])/2 if n%2==0 and middle else middle[0][0] if middle else None}
+            event_summary['markers']=[{'time':start+(b+.5)*width,'count':c,'invalid':bad} for b,c,bad in db.execute("SELECT MIN(499,CAST((ts-?)/? AS INTEGER)),COUNT(*),SUM(quality NOT LIKE '单次递增%') FROM cylinder_events WHERE asset=? AND ts>=? AND ts<=? GROUP BY 1 ORDER BY 1",(start,width,asset,start,end))]
+
         # Model plots are aggregated from complete cycles only. State 2 means
         # at least one model high-risk cycle in a coarse bin, not an entire bin.
         features=['if_score','torque_amplitude','velocity_instability','torque_di','velocity_di','mean_di','work_time','base_time']

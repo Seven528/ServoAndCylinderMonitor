@@ -21,3 +21,5 @@
 .zoom-plot rect{stroke:none}.zoom-plot text{stroke:none;font-size:16px}.zoom-plot .brush-selection[hidden]{display:none}.wave-chart .chart-legend{flex-wrap:wrap;gap:8px 14px}
 
 .wave-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.overlay-plot{display:block;width:100%;min-height:180px}.overlay-plot text{font-size:15px;fill:#5a646b}.overlay-pager{display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12px}@media(max-width:1000px){.wave-pair{grid-template-columns:1fr}}
+
+#trend-forecast .wave-chart{background:var(--paper)}.forecast-plot{display:block;width:100%;height:auto;min-height:280px;stroke:none;fill:none}.forecast-plot text{fill:#525f6b;stroke:none;font-size:12px}.forecast-plot path{stroke-linecap:round}.forecast-plot polygon{stroke:none}.joint-chart{width:100%;background:white}.joint-chart .zoom-plot{height:auto;min-height:280px;stroke:none}.joint-chart text{stroke:none}

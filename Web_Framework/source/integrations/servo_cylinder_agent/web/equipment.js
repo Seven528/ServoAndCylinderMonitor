@@ -83,6 +83,9 @@ class EquipmentView {
  }
  draw(){const v=this.view;if(!v)return;const mode=this.mode,info=v.model_info;
  let html=metrics(v,mode);
+ const cd=info.cycle_diagnostics,pc=info.product_cycle;
+ if(cd&&pc)html+=`<p class="method-copy">周期识别：运动速度阈值 ${num(pc.velocity_threshold,6)}；${num(cd.distinct_timestamps,0)} 个不同采样时刻 / ${num(cd.records,0)} 条记录。数据库筛选可使用入库时间，波形优先使用有效 MSG_TIMESTAMP 采集时间。</p>${!cd.complete?'<p class="callout">没有识别到闭合的候选产品周期。请核对采集时间精度、运动信号缺失及长静止阈值；不能将动作指令次数冒充产品数。趋势预测不依赖完整周期，仍可在预测页查看。</p>':''}`;
+
  if(mode==='overview'){
   html+=`<p class="method-copy">${esc(v.statistics)} P05/P95 描述分布两端；标准差表示桶内离散程度，不是置信区间。首尾不完整周期仍展示波形，不进入周期模型。</p>`;
   html+=`<p class="method-copy">候选产品周期包含动作组内所有运行、保持、等待和返回；结束于下一个动作组起点。${esc(info.product_cycle?.definition||'旧版指令周期，请重新运行分析更新周期口径。')} 静止阈值 ${num(info.product_cycle?.idle_seconds,3)} 秒。起点前和最后未闭合片段不进入模型；平坦段有数值代表持续采样。叠加图仅包含首尾均在当前区间内的完整周期（${num(v.overlays?.total,0)} 个），与上方“完整周期”起点统计口径不同。</p>`;

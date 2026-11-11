@@ -205,6 +205,8 @@ def analyze_stream(stream,dataset_name,dictionary_path=None,source_bytes=None,so
         stage_started=time.perf_counter()
         from .equipment_analysis import prepare_equipment,persist
         result['equipment']=prepare_equipment(engine)
+        from .trend_forecast import forecast
+        result['predictive']['trend']=forecast(engine.db,engine.progress)
         timings['cycle_models_seconds']=round(time.perf_counter()-stage_started,3)
         stage_started=time.perf_counter()
         engine.progress('正在保存可缩放的本机波形明细')

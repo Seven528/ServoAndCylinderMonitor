@@ -143,6 +143,18 @@ function renderPredictive(data) {
   $("#rul-status").className = `rul-card ${ready ? "ready" : ""}`;
   $("#rul-status").innerHTML = `<div class="rul-title"><h3>${ready ? "数据具备进入 RUL 模型评审的最低条件" : "当前不输出剩余寿命数值"}</h3><span class="state-pill ${ready ? "" : "watch"}">${ready ? "待验证" : "数据准备中"}</span></div><p>${esc(item.message)}</p><p><b>当前缺口</b></p><ul>${item.reasons.map((reason) => `<li>${esc(reason)}</li>`).join("")}</ul><p>已识别设备数 ${fmt(item.distinct_assets,0)} · 确认事件记录 ${fmt(item.confirmed_event_rows,0)}</p>`;
   $("#models").innerHTML = item.candidate_models.map((model) => `<article class="model-card"><h4>${esc(model.model)}</h4><p><b>所需数据：</b>${esc(model.requires)}</p></article>`).join("");
+  const trend=item.trend;
+  let host=document.getElementById('trend-forecast');
+  if(!host){host=document.createElement('div');host.id='trend-forecast';document.getElementById('rul-status').before(host)}
+  host.innerHTML=`<h3>运行指标趋势预测（非剩余寿命）</h3><p class="method-copy">${esc(trend?.method||'请重新运行分析生成趋势预测。')}</p>`+(trend?.series||[]).map(t=>{
+    if(t.status!=='ready')return `<article class="wave-chart"><h4>${esc(t.asset)} · ${esc(t.label)}</h4><p>${esc(t.reason)}</p></article>`;
+    const all=[...t.history,...t.future],low=Math.min(...all.map(p=>p.low??p.value)),high=Math.max(...all.map(p=>p.high??p.value)),span=high-low||1;
+    const a=all[0].time,b=all.at(-1).time,x=v=>60+(v-a)/(b-a)*720,y=v=>170-(v-low)/span*140;
+    const path=points=>points.map((p,i)=>`${i?'L':'M'}${x(p.time)},${y(p.value)}`).join(' ');
+    const f=t.future,area=f.map(p=>`${x(p.time)},${y(p.high)}`).concat([...f].reverse().map(p=>`${x(p.time)},${y(p.low)}`)).join(' ');
+    return `<article class="wave-chart"><h4>${esc(t.asset)} · ${esc(t.label)}</h4><p>${esc(t.model)} · 回测MAE ${fmt(t.selected_mae,4)}；保持值基线MAE ${fmt(t.baseline_mae,4)} · 斜率 ${fmt(t.slope_per_hour,4)} /小时</p><svg viewBox="0 0 820 215" style="width:100%" role="img" aria-label="${esc(t.label)}趋势预测"><polygon points="${area}" fill="#d8edfa"/><path d="${path(t.history)}" stroke="#007bc0" fill="none" stroke-width="2"/><path d="${path([t.history.at(-1),...f])}" stroke="#c06000" fill="none" stroke-dasharray="5 3" stroke-width="2"/><text x="2" y="30">${fmt(high,2)}</text><text x="2" y="170">${fmt(low,2)}</text><text x="60" y="200">${esc(new Date(a*1000).toLocaleString())}</text><text x="780" y="200" text-anchor="end">${esc(new Date(b*1000).toLocaleString())}</text></svg><p class="method-copy">蓝线：观测桶均值；橙色虚线：预测；浅蓝：启发式误差带。${t.history_buckets} 个连续桶，留出 ${t.holdout_buckets} 桶回测，桶宽 ${fmt(t.bucket_seconds,2)} 秒。速度/扭矩有正负方向，均值不代表幅度或磨损。</p></article>`;
+  }).join('');
+
 }
 
 function render(data) {

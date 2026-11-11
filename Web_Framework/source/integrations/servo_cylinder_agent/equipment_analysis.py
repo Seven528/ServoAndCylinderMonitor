@@ -41,11 +41,13 @@ def prepare_equipment(engine):
                 interval=db.execute('SELECT value FROM sample_intervals WHERE asset=? AND value>0 ORDER BY value LIMIT 1 OFFSET ?',(asset,n//2)).fetchone() if n else None
                 gap_limit=max(30,10*(interval[0] if interval else 1))
                 execute_n,still_n=db.execute('SELECT COUNT(DISTINCT execute),COUNT(DISTINCT standstill) FROM samples WHERE asset=?',(asset,)).fetchone()
-                vmax=engine.quantile('ABS(ACTVEL)','asset=?',(asset,),q=.95) if 'ACTVEL' in engine.available else None
+                vmax=engine.quantile('ABS(ACTVEL)','asset=? AND ABS(ACTVEL)>1e-6',(asset,),q=.95) if 'ACTVEL' in engine.available else None
+                set_speed=engine.quantile('ABS(SPEED)','asset=? AND ABS(SPEED)>1e-6',(asset,),q=.95) if 'SPEED' in engine.available else None
+                vmax=max(vmax or 0,set_speed or 0)
                 cached=(gap_limit,execute_n,still_n,vmax)
                 db.execute('INSERT INTO equipment_parameters VALUES(?,?,?,?,?)',(asset,*cached))
             gap_limit,execute_n,still_n,vmax=cached
-            threshold=max(1e-8,(vmax or 0)*.02)
+            threshold=max(1e-6,(vmax or 0)*.02)
             from .product_cycles import motion_rows, settings
             source,idle_seconds,idle_method=settings(db,asset,threshold,gap_limit,progress)
             boundary=f'候选产品周期：{source} 长静止后动作起点 → 下一起点；静止阈值 {idle_seconds:.3f} 秒；{idle_method}；未经产品信号验证'
@@ -77,10 +79,11 @@ def prepare_equipment(engine):
         progress(f'正在计算周期波形特征：{family} · {asset}')
         from .cycle_features import compute_features
         vmax=db.execute('SELECT vmax FROM equipment_parameters WHERE asset=?',(asset,)).fetchone()[0]
-        compute_features(db,family,asset,max(1e-8,(vmax or 0)*.02),progress)
+        compute_features(db,family,asset,max(1e-6,(vmax or 0)*.02),progress)
         info=model_cycles(db,family,asset,progress)
         source,idle,method=db.execute('SELECT source,idle,method FROM product_settings WHERE asset=?',(asset,)).fetchone()
-        info['product_cycle']={'kind':'candidate','idle_seconds':idle,'source':source,'threshold_method':method,'definition':'当前产品动作组开始到下一动作组开始，包含运行、保持、等待及返回；无产品启动/ID标签，尚未确认一组对应一个产品。'}
+        info['cycle_diagnostics']={'records':db.execute('SELECT COUNT(*) FROM samples WHERE asset=?',(asset,)).fetchone()[0],'distinct_timestamps':db.execute('SELECT COUNT(DISTINCT ts) FROM samples WHERE asset=?',(asset,)).fetchone()[0],'complete':db.execute('SELECT COUNT(*) FROM cycles WHERE family=? AND asset=? AND complete=1',(family,asset)).fetchone()[0]}
+        info['product_cycle']={'velocity_threshold':max(1e-6,(vmax or 0)*.02),'kind':'candidate','idle_seconds':idle,'source':source,'threshold_method':method,'definition':'当前产品动作组开始到下一动作组开始，包含运行、保持、等待及返回；无产品启动/ID标签，尚未确认一组对应一个产品。'}
         info['boundary']=db.execute('SELECT boundary FROM cycles WHERE family=? AND asset=? LIMIT 1',(family,asset)).fetchone()[0]
         db.execute('INSERT INTO equipment_models VALUES(?,?,?)',(family,asset,json.dumps(info,ensure_ascii=False,allow_nan=False)))
         db.commit()

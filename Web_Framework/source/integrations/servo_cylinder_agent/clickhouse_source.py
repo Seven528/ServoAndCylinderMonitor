@@ -185,7 +185,7 @@ def build_read(connection, columns, options):
             'EXEUTE','EXECUTE','ACCELERATING','DECELERATING','DRIVEENABLED','DRIVEREADYFORMOVEMENT','AXISINREFERENCE',
             'ASSET_ID','DEVICE_ID','EQUIPMENT_ID','CYLINDER_ID','AXIS_ID','AGE_CYCLES','AGE_HOURS','AGE_DAYS',
             'OPERATING_HOURS','FAILURE_EVENT','FAILED','FAILURE_FLAG','REPLACED'}
-    projection = ', '.join(identifier(name) for name in known if name.upper() in used)
+    projection = ', '.join((f"toString({identifier(name)}, 'UTC') AS {identifier(name)}" if name.upper()=='MSG_TIMESTAMP' and 'DateTime' in known[name] else identifier(name)) for name in known if name.upper() in used)
     projection = (projection + ', ') if projection else ''
     # Sorting is done by the shared local pipeline. Avoid an expensive warehouse
     # ORDER BY. All matching records are streamed without LIMIT.
@@ -205,6 +205,11 @@ def normalize_frame(frame):
         timestamp=pd.to_datetime(frame.pop('__agent_timestamp_ms'),unit='ms',utc=True,errors='coerce')
     else:raise ValueError('API 返回数据缺少标准化时间字段。')
     if timestamp.isna().any():raise ValueError('返回数据包含无效时间戳，请核对时间字段。')
+    # Query-window clock and acquisition clock are different concepts.
+    event_column=next((c for c in frame if c.upper()=='MSG_TIMESTAMP'),None)
+    if event_column is not None:
+        event_time=pd.to_datetime(frame[event_column],utc=True,errors='coerce')
+        timestamp=event_time.where(event_time.notna(),timestamp)
     frame=frame.drop(columns=[c for c in frame if c.upper()=='MSG_TIMESTAMP'])
     frame['MSG_TIMESTAMP']=timestamp
     return frame

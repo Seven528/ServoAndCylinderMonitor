@@ -9,7 +9,7 @@ import math
 def motion_rows(db, asset, threshold, source):
     prior_counter=None
     for rid,ts,execute,still,vel,counter in db.execute('SELECT id,ts,execute,standstill,ACTVEL,MOVEMENTCOUNTER FROM samples WHERE asset=? AND ts IS NOT NULL ORDER BY ts,id',(asset,)):
-        if source=='ACTVEL':active=None if vel is None else abs(vel)>threshold
+        if source=='ACTVEL':active=False if still==1 else None if vel is None else abs(vel)>threshold
         elif source=='STANDSTILL':active=None if still is None else still==0
         else:active=counter is not None and prior_counter is not None and counter>prior_counter
         yield rid,ts,vel,active
@@ -36,10 +36,16 @@ def settings(db,asset,threshold,gap_limit,progress):
         if i%10000==0:progress(f'识别产品动作组间隔：{asset} · {i:,} 条')
     db.executemany('INSERT INTO product_idle VALUES(?)',pending)
     best=4.;split=None;previous=None
+    total=db.execute('SELECT COUNT(*) FROM product_idle WHERE duration>=0.5').fetchone()[0]
+    index=0
     for (duration,) in db.execute('SELECT duration FROM product_idle WHERE duration>=0.5 ORDER BY duration'):
-        if previous and duration/previous>best:best=duration/previous;split=math.sqrt(previous*duration)
-        previous=duration
+        if previous and index>=3 and total-index>=3 and duration/previous>best:best=duration/previous;split=math.sqrt(previous*duration)
+        previous=duration;index+=1
     idle=split if split is not None else 10.
-    method='静止时长最大倍率间隙（倍率≥4）几何中点' if split is not None else '静止时长未明显分群，使用假设阈值 10 秒'
+    if split is None and total>=6:
+        lo=db.execute('SELECT duration FROM product_idle WHERE duration>=0.5 ORDER BY duration LIMIT 1 OFFSET ?',(total//2,)).fetchone()[0]
+        hi=db.execute('SELECT duration FROM product_idle WHERE duration>=0.5 ORDER BY duration LIMIT 1 OFFSET ?',(int((total-1)*.9),)).fetchone()[0]
+        if hi>lo*2:idle=min(10.,math.sqrt(lo*hi))
+    method='静止时长最大倍率间隙（倍率≥4）几何中点' if split is not None else f'无可靠双群分界，使用候选阈值 {idle:.3f} 秒（需现场核对）'
     db.execute('INSERT INTO product_settings VALUES(?,?,?,?)',(asset,source,idle,method))
     return source,idle,method

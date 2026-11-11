@@ -26,6 +26,7 @@ def prepare_equipment(engine):
     db.execute('CREATE TABLE cycles(family TEXT,asset TEXT,cid INTEGER,start REAL,end REAL,n INTEGER,complete INTEGER,boundary TEXT,'+','.join(field+' REAL' for field in CYCLE_FIELDS)+',if_score REAL,if_anomaly INTEGER,torque_di REAL,velocity_di REAL,mean_di REAL,stage INTEGER,PRIMARY KEY(family,asset,cid))')
     db.execute('CREATE TABLE equipment_models(family TEXT,asset TEXT,info TEXT,PRIMARY KEY(family,asset))')
     db.execute('CREATE INDEX IF NOT EXISTS samples_asset_time ON samples(asset,ts,id)')
+    db.execute('CREATE INDEX IF NOT EXISTS wave_cycle ON wave_rows(family,asset,cid,sample_id)')
     for family,fields in [('servo',SERVO),('cylinder',CYLINDER)]:
         present=[field for field in fields if field in engine.available]
         if not present:continue
@@ -48,46 +49,24 @@ def prepare_equipment(engine):
                 db.execute('INSERT INTO equipment_parameters VALUES(?,?,?,?,?)',(asset,*cached))
             gap_limit,execute_n,still_n,vmax=cached
             threshold=max(1e-6,(vmax or 0)*.02)
-            from .product_cycles import motion_rows, settings
-            source,idle_seconds,idle_method=settings(db,asset,threshold,gap_limit,progress)
-            boundary=f'候选产品周期：{source} 长静止后动作起点 → 下一起点；静止阈值 {idle_seconds:.3f} 秒；{idle_method}；未经产品信号验证'
-            cid=0;seen_start=False;previous=None;start=None;last=None;length=0;buffer=[];quiet=None
-            for rid,ts,vel,active in motion_rows(db,asset,threshold,source):
-                reset=previous is not None and ts-previous[0]>gap_limit
-                # Missing motion evidence breaks confidence; no boundary is inferred
-                # through a missing block. Waiting is retained in the prior cycle.
-                unknown=active is None
-                if reset or unknown:quiet=None
-                rise=bool(active and quiet is not None and ts-quiet>=idle_seconds and not reset)
-                if start is not None and (rise or reset or unknown):
-                    complete=seen_start and rise and not reset and not unknown
-                    db.execute('INSERT INTO cycles(family,asset,cid,start,end,n,complete,boundary,duration) VALUES(?,?,?,?,?,?,?,?,?)',(family,asset,cid,start,ts if complete else last,length,int(complete),boundary,(ts if complete else last)-start))
-                    cid+=1;length=0;start=None;seen_start=rise and not reset and not unknown
-                if start is None:start=ts
-                if active:quiet=None
-                elif not unknown and quiet is None:quiet=ts
-                acceleration=(abs(vel)-abs(previous[1]))/(ts-previous[0]) if previous and vel is not None and previous[1] is not None and ts>previous[0] and not reset and not rise else None
-                buffer.append((family,asset_num,rid,cid,acceleration));length+=1;last=ts
-                if len(buffer)>=10000:
-                    db.executemany('INSERT INTO wave_rows VALUES(?,?,?,?,?)',buffer);buffer=[];progress(f'产品周期读取：{asset} · 已识别 {cid:,} 个分段')
-                previous=(ts,vel)
-            db.executemany('INSERT INTO wave_rows VALUES(?,?,?,?,?)',buffer)
-            if start is not None:db.execute('INSERT INTO cycles(family,asset,cid,start,end,n,complete,boundary,duration) VALUES(?,?,?,?,?,?,?,?,?)',(family,asset,cid,start,last,length,0,boundary,last-start))
+            from .process_cycles import build
+            db.execute('CREATE TEMP TABLE IF NOT EXISTS process_info(family TEXT,asset TEXT,info TEXT,PRIMARY KEY(family,asset))')
+            process=build(db,family,asset,asset_num,threshold,gap_limit,progress)
+            db.execute('INSERT INTO process_info VALUES(?,?,?)',(family,asset,json.dumps(process,ensure_ascii=False)))
             db.commit()
-    db.execute('CREATE INDEX wave_cycle ON wave_rows(family,asset,cid,sample_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS wave_cycle ON wave_rows(family,asset,cid,sample_id)')
     for family,asset in db.execute('SELECT family,asset FROM cycles GROUP BY family,asset'):
         progress(f'正在计算周期波形特征：{family} · {asset}')
         from .cycle_features import compute_features
         vmax=db.execute('SELECT vmax FROM equipment_parameters WHERE asset=?',(asset,)).fetchone()[0]
         compute_features(db,family,asset,max(1e-6,(vmax or 0)*.02),progress)
         info=model_cycles(db,family,asset,progress)
-        source,idle,method=db.execute('SELECT source,idle,method FROM product_settings WHERE asset=?',(asset,)).fetchone()
+        info['product_cycle']=json.loads(db.execute('SELECT info FROM process_info WHERE family=? AND asset=?',(family,asset)).fetchone()[0])
         info['cycle_diagnostics']={'records':db.execute('SELECT COUNT(*) FROM samples WHERE asset=?',(asset,)).fetchone()[0],'distinct_timestamps':db.execute('SELECT COUNT(DISTINCT ts) FROM samples WHERE asset=?',(asset,)).fetchone()[0],'complete':db.execute('SELECT COUNT(*) FROM cycles WHERE family=? AND asset=? AND complete=1',(family,asset)).fetchone()[0]}
-        info['product_cycle']={'velocity_threshold':max(1e-6,(vmax or 0)*.02),'kind':'candidate','idle_seconds':idle,'source':source,'threshold_method':method,'definition':'当前产品动作组开始到下一动作组开始，包含运行、保持、等待及返回；无产品启动/ID标签，尚未确认一组对应一个产品。'}
         info['boundary']=db.execute('SELECT boundary FROM cycles WHERE family=? AND asset=? LIMIT 1',(family,asset)).fetchone()[0]
         db.execute('INSERT INTO equipment_models VALUES(?,?,?)',(family,asset,json.dumps(info,ensure_ascii=False,allow_nan=False)))
         db.commit()
-    return {'version':2,'servo':catalog(db,'servo'),'cylinder':catalog(db,'cylinder'),'method':'同资产伺服与气缸共用候选产品边界；不完整边界周期不训练；IsolationForest 和 HMM 训练使用明确披露的有界样本，全部有效周期推断。'}
+    return {'version':3,'servo':catalog(db,'servo'),'cylinder':catalog(db,'cylinder'),'method':'伺服有效周期与气缸动作事件独立分析；不完整边界周期不训练；IsolationForest 和 HMM 训练使用明确披露的有界样本，全部有效周期推断。'}
 
 
 def catalog(db,family,query=''):
@@ -95,7 +74,8 @@ def catalog(db,family,query=''):
     rows=db.execute("SELECT asset,info FROM equipment_models WHERE family=? AND instr(asset,?)>0 ORDER BY asset LIMIT 100",(family,query)).fetchall()
     assets=[]
     for asset,info in rows:
-        start,end,n,complete=db.execute('SELECT MIN(start),MAX(end),SUM(n),SUM(complete) FROM cycles WHERE family=? AND asset=?',(family,asset)).fetchone()
+        complete=db.execute('SELECT SUM(complete) FROM cycles WHERE family=? AND asset=?',(family,asset)).fetchone()[0]
+        start,end,n=db.execute('SELECT MIN(ts),MAX(ts),COUNT(*) FROM samples WHERE asset=? AND ts IS NOT NULL',(asset,)).fetchone()
         assets.append({'asset':asset,'start':start,'end':end,'records':n,'complete_cycles':complete,**json.loads(info)})
     return {'assets':assets,'total_assets':total,'matching_preview':len(assets)}
 
@@ -132,7 +112,7 @@ def query_view(run_id,options):
     with open_evidence(run_id) as db:
         info=db.execute('SELECT info FROM equipment_models WHERE family=? AND asset=?',(family,asset)).fetchone()
         if not info:raise ValueError('资产不存在。')
-        full=db.execute('SELECT MIN(start),MAX(end) FROM cycles WHERE family=? AND asset=?',(family,asset)).fetchone()
+        full=db.execute('SELECT MIN(ts),MAX(ts) FROM samples WHERE asset=? AND ts IS NOT NULL',(asset,)).fetchone()
         start=float(options.get('start',full[0]));end=float(options.get('end',full[1]))
         if not math.isfinite(start) or not math.isfinite(end) or end<start:raise ValueError('请选择有效时间范围。')
         start=max(start,full[0]);end=min(end,full[1])
@@ -148,10 +128,16 @@ def query_view(run_id,options):
         bands=[]
         if count<=1000:
             bands=[dict(zip(['cid','start','end','complete','stage','anomaly'],row)) for row in db.execute('SELECT cid,start,end,complete,stage,if_anomaly FROM cycles WHERE family=? AND asset=? AND end>=? AND start<=? ORDER BY cid',(family,asset,start,end))]
+        event_summary=None
+        if family=='cylinder' and json.loads(info[0]).get('product_cycle',{}).get('kind')=='events_only':
+            count=0;bands=[]
+            total,unit=db.execute('SELECT COUNT(*),SUM(delta=1) FROM cylinder_events WHERE asset=? AND ts>=? AND ts<=?',(asset,start,end)).fetchone()
+            events=[dict(zip(['time','delta','work_ms','base_ms','quality'],r)) for r in db.execute('SELECT ts,delta,work_ms,base_ms,quality FROM cylinder_events WHERE asset=? AND ts>=? AND ts<=? ORDER BY ts DESC LIMIT 100',(asset,start,end))]
+            event_summary={'count':total,'unit_increments':unit or 0,'preview':events}
         # Model plots are aggregated from complete cycles only. State 2 means
         # at least one model high-risk cycle in a coarse bin, not an entire bin.
         features=['if_score','torque_amplitude','velocity_instability','torque_di','velocity_di','mean_di','work_time','base_time']
         rows=db.execute('SELECT MIN(499,CAST((start-?)/? AS INTEGER)) b,AVG(start),'+','.join(('MAX' if f=='if_score' else 'AVG')+'('+f+')' for f in features)+',MAX(stage),SUM(if_anomaly),COUNT(*),SUM(stage=0),SUM(stage=1),SUM(stage=2),MIN(cid),MAX(cid) FROM cycles WHERE family=? AND asset=? AND complete=1 AND start>=? AND start<=? GROUP BY b ORDER BY b',(start,width,family,asset,start,end)).fetchall()
         models=[dict(zip(['bucket','time',*features,'stage','anomalies','cycles','stage0','stage1','stage2','first_cid','last_cid'],row)) for row in rows]
         scope=db.execute('SELECT COUNT(*),SUM(complete),SUM(CASE WHEN complete=1 THEN if_anomaly END),AVG(CASE WHEN complete=1 THEN mean_di END),SUM(CASE WHEN complete=1 THEN stage=2 END),COUNT(CASE WHEN complete=1 THEN stage END),COUNT(CASE WHEN complete=1 THEN mean_di END) FROM cycles WHERE family=? AND asset=? AND start>=? AND start<=?',(family,asset,start,end)).fetchone()
-        return {'overlays':overlays,'family':family,'asset':asset,'start':start,'end':end,'full_start':full[0],'full_end':full[1],'charts':charts,'bands':bands,'cycle_count':count,'dense_cycles':count>1000,'models':models,'model_info':json.loads(info[0]),'scope':dict(zip(['cycles','complete_cycles','if_anomalies','mean_degradation','high_risk_cycles','hmm_cycles','degradation_cycles'],scope)),'resolution_seconds':width,'statistics':'所选区间全部记录参与精确分位数统计；图点为时间桶，缩放后重新聚合。模型固定于本次完整分析，缩放不重新拟合。'}
+        return {'cylinder_events':event_summary,'overlays':overlays,'family':family,'asset':asset,'start':start,'end':end,'full_start':full[0],'full_end':full[1],'charts':charts,'bands':bands,'cycle_count':count,'dense_cycles':count>1000,'models':models,'model_info':json.loads(info[0]),'scope':dict(zip(['cycles','complete_cycles','if_anomalies','mean_degradation','high_risk_cycles','hmm_cycles','degradation_cycles'],scope)),'resolution_seconds':width,'statistics':'所选区间全部记录参与精确分位数统计；图点为时间桶，缩放后重新聚合。模型固定于本次完整分析，缩放不重新拟合。'}

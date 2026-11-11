@@ -11,7 +11,8 @@ def motion_rows(db, asset, threshold, source):
     for rid,ts,execute,still,vel,counter in db.execute('SELECT id,ts,execute,standstill,ACTVEL,MOVEMENTCOUNTER FROM samples WHERE asset=? AND ts IS NOT NULL ORDER BY ts,id',(asset,)):
         if source=='ACTVEL':active=False if still==1 else None if vel is None else abs(vel)>threshold
         elif source=='STANDSTILL':active=None if still is None else still==0
-        else:active=counter is not None and prior_counter is not None and counter>prior_counter
+        elif source=='MOVEMENTCOUNTER':active=counter is not None and prior_counter is not None and counter>prior_counter
+        else:active=None
         yield rid,ts,vel,active
         prior_counter=counter
 
